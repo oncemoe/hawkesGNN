@@ -117,7 +117,7 @@ class AS733(InMemoryDataset):
         for i, t in enumerate(stamps):  # as733 is sampled nonuniformally from 1971, 1980, 1990, 2000
             sf = df[df['t'] == t]
             data = Data()
-            data.num_nodes = num_nodes
+            data.num_nodes = int(num_nodes)
             data.edge_index = torch.tensor(sf[['x', 'y']].values.T, dtype=torch.long)
             data.edge_attr = torch.ones((len(sf), 1), dtype=torch.long) * i #torch.tensor(sf[['t']].values, dtype=torch.long)
             data_list.append(data)

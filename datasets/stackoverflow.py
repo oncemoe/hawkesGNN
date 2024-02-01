@@ -113,7 +113,7 @@ class StackOverflow(InMemoryDataset):
         for t in stamps:
             sf = df[df['t'] == t]
             data = Data()
-            data.num_nodes = num_nodes
+            data.num_nodes = int(num_nodes)
             data.edge_index = torch.tensor(sf[['x', 'y']].values.T, dtype=torch.long)
             data.edge_attr = torch.tensor(sf[['t_']].values, dtype=torch.long)
             data_list.append(data)

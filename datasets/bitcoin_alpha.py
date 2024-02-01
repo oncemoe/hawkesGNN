@@ -98,7 +98,7 @@ class BitcoinAlpha(InMemoryDataset):
             data = Data()
             data.edge_index = torch.tensor(ssf[['x', 'y']].values.T, dtype=torch.long)
             data.edge_attr = torch.tensor(ssf[['w', 't_']].values, dtype=torch.long)
-            data.num_nodes = num_nodes
+            data.num_nodes = int(num_nodes)
             #data.delta_index = torch.tensor(ssf[['x', 'y']].values.T, dtype=torch.long)
             #data.delta_attr = torch.tensor(ssf[['w']].values.flatten(), dtype=torch.long)
             data_list.append(data)

@@ -16,7 +16,7 @@ import random
 class WinGNNLinkPrediction(LinkPrediction):
     
     @torch.no_grad()
-    def test_snap(self, model, fast_weights, snaps, device, return_full_mrr=True):
+    def test_snap(self, model, fast_weights, snaps, device, return_full_mrr=False):
         loss_list = []
         result = [0] * 7
 
@@ -31,11 +31,11 @@ class WinGNNLinkPrediction(LinkPrediction):
         for i, r in enumerate(res):
             result[i+1] = r.item()
 
-        if return_full_mrr:   # accelate training process
-            full_adj = make_full_adj(target)
-            full_out = model.predict(h, full_adj.indices().to(device))
-            mrr = calculate_row_mrr(target, full_adj, full_out, device)
-            result[0] = mrr
+        # if return_full_mrr:   # accelate training process
+        #     full_adj = make_full_adj(target)
+        #     full_out = model.predict(h, full_adj.indices().to(device))
+        #     mrr = calculate_row_mrr(target, full_adj, full_out, device)
+        #     result[0] = mrr
 
         # loss, [mrr@row, mrr@1000, hit@1, hit@3, hit@10]
         return np.mean(loss_list), result
@@ -63,8 +63,7 @@ class WinGNNLinkPrediction(LinkPrediction):
 
                 h = model(data.to(device), fast_weights)
 
-                pos_edges = target.edge_index.to(device)
-                neg_edges = self.negative_sampling(target).to(device)
+                pos_edges, neg_edges = self.negative_sampling(target, device)
                 loss = model.train_step(h, pos_edges, neg_edges)
 
                 grad = torch.autograd.grad(loss, fast_weights)
@@ -78,8 +77,7 @@ class WinGNNLinkPrediction(LinkPrediction):
                 snaps = (ds_window[idx+1], ds_window[idx+2]) 
                 data, target = snaps
                 h = model(data.to(device), fast_weights)
-                pos_edges = target.edge_index.to(device)
-                neg_edges = self.negative_sampling(target).to(device)
+                pos_edges, neg_edges = self.negative_sampling(target, device)
                 val_loss = model.train_step(h, pos_edges, neg_edges)
                 _, mets = self.test_snap(model, fast_weights, snaps, device, False)
                 
@@ -133,7 +131,8 @@ class WinGNNLinkPrediction(LinkPrediction):
     def train(self, args, model, dataset, split):
         S_dw = [0] * len(list(model.parameters()))
         
-        optimizer = torch.optim.Adam(params=model.parameters(),weight_decay=args.weight_decay,lr=args.lr)
+        # https://github.com/pytorch/pytorch/issues/113758
+        optimizer = torch.optim.Adam(params=model.parameters(),weight_decay=args.weight_decay,lr=args.lr, foreach=False)
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
 
         best_mrr = 0

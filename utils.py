@@ -52,7 +52,7 @@ def calculate_row_mrr(pos_adj, pos_pred, neg_adj, neg_pred):
     indices = torch.cat([pos_adj.coalesce().indices(), neg_adj.coalesce().indices()], dim=1)
     values = torch.cat([pos_pred, neg_pred]).flatten()
     #print(indices.shape, values.shape)
-    mat = torch.sparse.FloatTensor(indices, values, pos_adj.size()).to_dense()
+    mat = torch.sparse_coo_tensor(indices, values, pos_adj.size()).to_dense()
     mrr_list = []
     for i in range(pos_adj.size(0)):
         pos = pos_adj[i].coalesce().indices()
@@ -70,7 +70,7 @@ def calculate_row_mrr(pos_adj, pos_pred, neg_adj, neg_pred):
 def calculate_row_mrr(target, full_adj, full_pred, device):
     indices = full_adj.coalesce().indices().to(device)
     values = full_pred.flatten().to(device)
-    mat = torch.sparse.FloatTensor(indices, values, full_adj.size()).to_dense()
+    mat = torch.sparse_coo_tensor(indices, values, full_adj.size()).to_dense()
     exist = target.edge_index[0].flatten().unique()
     mrr_list = []
     for u in exist:
@@ -205,7 +205,7 @@ if __name__ == "__main__":
     indices = torch.Tensor([[0, 0, 1], [1, 2, 2]]).long()
     snap.edge_index = indices
     snap.num_nodes = 3
-    snap.adj = torch.sparse.FloatTensor(indices, torch.ones(len(indices[0]))).coalesce()
+    snap.adj = torch.sparse_coo_tensor(indices, torch.ones(len(indices[0]))).coalesce()
 
     full_adj = make_full_adj(snap)
     full_pred = torch.Tensor([2, 1, 3, 4])

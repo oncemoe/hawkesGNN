@@ -11,7 +11,7 @@ from torch_geometric.datasets import JODIEDataset
 
 import torch_geometric.utils as tgu
 from tqdm import tqdm
-from dataloader.utils import EvolveGCNDS, GraphPairDS
+from dataloader.utils import EvolveGCNDS, GraphPairDS, simple_to_undirected
 
 
 # @torch.no_grad()
@@ -83,7 +83,7 @@ class JodieLoaderFactory:
             stamp = self.data.t[s:t]
             g.neg_edge_index = jodie_negative_sampling(self.num_nodes, indices, self._src_max+1, self._num_neg)
 
-        g.adj = torch.sparse.FloatTensor(indices, torch.ones(len(indices[0])), (self.num_nodes, self.num_nodes))
+        # g.adj = torch.sparse_coo_tensor(indices, torch.ones(len(indices[0])), (self.num_nodes, self.num_nodes))
         g.edge_index = indices
         g.edge_attr = attr
         g.t = stamp

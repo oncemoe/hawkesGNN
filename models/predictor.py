@@ -19,14 +19,17 @@ class LinkPredictor(torch.nn.Module):
         for lin in self.lins:
             lin.reset_parameters()
 
-    def forward(self, x_i, x_j):
+    def forward(self, x_i, x_j, raw=False):
         x = x_i * x_j
         for lin in self.lins[:-1]:
             x = lin(x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.lins[-1](x)
-        return torch.sigmoid(x)
+        if raw:
+            return x, torch.sigmoid(x)
+        else:
+            return torch.sigmoid(x)
 
 
 # Jodie is bipartie graph, the source and destination are different

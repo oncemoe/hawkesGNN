@@ -1,11 +1,31 @@
 import numpy as np
 import torch
+from torch import Tensor
 import torch.nn.functional as F
 from torch.utils import data as td
 from typing import List, Optional, Tuple, Union
 from queue import Queue
 from torch_geometric.data import Data
 from torch_geometric.utils import add_remaining_self_loops
+
+
+def simple_to_undirected(
+    edge_index: Tensor,
+    edge_attr: Optional[Union[Tensor, List[Tensor]]] = None,
+):
+    r"""
+    same as torch_geometric.utils.to_undirected but no coalesce
+    """
+    row, col = edge_index
+    row, col = torch.cat([row, col], dim=0), torch.cat([col, row], dim=0)
+    edge_index = torch.stack([row, col], dim=0)
+
+    if edge_attr is not None and isinstance(edge_attr, torch.Tensor):
+        edge_attr = torch.cat([edge_attr, edge_attr], dim=0)
+    elif edge_attr is not None:
+        edge_attr = [torch.cat([e, e], dim=0) for e in edge_attr]
+
+    return (edge_index, edge_attr)
 
 
 # @torch.no_grad()
@@ -132,7 +152,7 @@ class LRUUpdater:
         indices = torch.from_numpy(indices).long()
         #indices = np.hstack([np.stack([np.ones(q.qsize()) * i, np.array(q.queue)]) for i, q in enumerate(self.buf)])
         d.edge_index = self.edge[:, indices]
-        d.adj = torch.sparse.FloatTensor(d.edge_index, torch.ones(len(indices)), d.size()).coalesce()
+        d.adj = torch.sparse_coo_tensor(d.edge_index, torch.ones(len(indices)), d.size()).coalesce()
         d.edge_attr = self.attr[indices]
         #attr = torch.cat([dataset[t-j].edge_attr.cpu() for j in range(0, window)], dim=0).double()
         #data.edge_attr = attr

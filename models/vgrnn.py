@@ -117,7 +117,7 @@ class VGRNN(BaseLPModel):
         else:
             x = data.x
         edge_index = data.edge_index
-        adj = data.adj
+        adj = torch.sparse_coo_tensor(edge_index, torch.ones(edge_index.size(1), (self.n_node, self.n_node)), device=x.device).coalesce()
         
         if hidden_in is None:
             h = Variable(torch.zeros(self.n_layers, x.size(0), self.h_dim)).to(x.device)

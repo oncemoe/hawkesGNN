@@ -10,6 +10,7 @@ from models.base import BaseLPModel
 import copy
 import time
 from utils import make_negative_adj,  calculate_row_mrr, calculate_sample_mrr, make_full_adj
+from torch_geometric.utils import add_remaining_self_loops
 
 
 class LinkPrediction:
@@ -20,28 +21,53 @@ class LinkPrediction:
         self.clip_grad_norm = 2.0
         self.build_model = build_model
         self.is_bipart = False
+        
+        self.batch_size = args.batch_size
+        self.n_layers = args.n_layers
+        self.n_hidden = args.n_hidden
     
     def set_jodie(self, dst_min, dst_max):
         self.is_bipart = True
         self.min_dst_idx = dst_min
         self.max_dst_idx = dst_max
+        
+        
+    @torch.no_grad()
+    def fast_negative_sampling(self, edge_index, num_nodes, num_neg_samples=1000, device='cpu', allow_self=False):
+        """ Sampling exactlly num_neg_samples for every positive edge"""
+        avoid_edge_index = edge_index
+        if not allow_self:
+            avoid_edge_index,_ = add_remaining_self_loops(avoid_edge_index)
+        scale = pow(10, len(str(num_nodes)))
+        avoid = (avoid_edge_index[0] * scale + avoid_edge_index[1]).to(device)
 
-    def negative_sampling(self, target):
+        u = edge_index[0].to(device).repeat(int(num_neg_samples * 1.2))
+        v = torch.randint(0, num_nodes, (len(u),), device=device)
+        e = u * scale + v
+        m = torch.isin(e, avoid)
+        return torch.stack([u[~m], v[~m]])
+
+
+    def negative_sampling(self, target, device=None):
         if self.is_bipart:
             pos_edge = target.edge_index
             neg_dst = torch.randint(self.min_dst_idx, self.max_dst_idx + 1, (pos_edge.size(1), ),
                                 dtype=torch.long, device=pos_edge.device)
-            return torch.stack([pos_edge[0], neg_dst])
+            return pos_edge, torch.stack([pos_edge[0], neg_dst])
         else:
             if 'raw_edge_index' in target: 
                 edges = target.raw_edge_index
             else:
                 edges = target.edge_index    
-            return negative_sampling(
-                edges, 
-                num_nodes=target.num_nodes,
-                num_neg_samples=edges.size(1) * self.n_neg_train, 
-                method=self.neg_method)
+            neg_edges = self.fast_negative_sampling(edges, target.num_nodes, num_neg_samples=self.n_neg_train)
+            if device is not None:
+                return edges.to(device), neg_edges.to(device)
+            return edges, neg_edges
+            # return negative_sampling(
+            #     edges, 
+            #     num_nodes=target.num_nodes,
+            #     num_neg_samples=edges.size(1) * self.n_neg_train, 
+            #     method=self.neg_method)
 
     def prepare_test_edges(self, target, device):
         if 'raw_edge_index' in target: 
@@ -71,8 +97,7 @@ class LinkPrediction:
             else:
                 data =batch[0].to(device)
 
-            pos_edges = target.edge_index.to(device)
-            neg_edges = self.negative_sampling(target).to(device)
+            pos_edges, neg_edges = self.negative_sampling(target, device)
             loss = model.train_step(data, pos_edges, neg_edges)
 
             loss_list.append(loss.item())
@@ -94,8 +119,8 @@ class LinkPrediction:
     def test(self, model: BaseLPModel, loader, device, return_full_mrr=True):
         model.eval()
         loss_list = []
-        result_list = np.zeros(7)
-        pos_list, neg_list = [], []
+        result_list = [[] for _ in range(7)]
+        count_list = []
         for batch in loader:
             target = batch[-1]
             if len(batch) > 2:
@@ -107,19 +132,16 @@ class LinkPrediction:
             h, pos_out, neg_out, loss = model.test_step(data, pos_edges, neg_edges, idx)
             loss_list.append(loss.item())
 
-            pos_list.append(pos_out)
-            neg_list.append(neg_out)
-
             del pos_edges
             del neg_edges
             del data
 
-        pos_out = torch.cat(pos_list)
-        neg_out = torch.cat(neg_list)
-        # TODO check pos_out and neg_out is arranged correctly
-        res = calculate_sample_mrr(pos_out, neg_out, self.n_neg_test)
-        for i, r in enumerate(res):
-            result_list[i+1] = r.item()
+            # TODO check pos_out and neg_out is arranged correctly
+            res = calculate_sample_mrr(pos_out, neg_out, self.n_neg_test)
+            for i, r in enumerate(res):
+                result_list[i+1].append(r.item())
+            result_list[0].append(0)
+            count_list.append(len(pos_out))
         
         # # full_mrr is not fair, unstable, and time consuming, not used any more...
         # if return_full_mrr:   # to accelate training process
@@ -131,13 +153,15 @@ class LinkPrediction:
         #     result_list[0].append(0)
 
         result = np.array(result_list)
+        count = np.array(count_list)
         # loss, [mrr@row, mrr@1000, hit@1, hit@3, hit@10, rocauc, ap]
-        return np.mean(loss_list), result
+        return np.mean(loss_list), (result * count).sum(1) / count.sum()
         
 
     # for fix split setting
     def train(self, args, model, loaders):
-        optimizer = torch.optim.Adam(params=model.parameters(),weight_decay=args.weight_decay,lr=args.lr)
+        # https://github.com/pytorch/pytorch/issues/113758
+        optimizer = torch.optim.Adam(params=model.parameters(),weight_decay=args.weight_decay,lr=args.lr, foreach=False)
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
 
         best_loss = float('inf')
@@ -196,4 +220,4 @@ class LinkPrediction:
             gpu_usage_list.append(gpu_mem_alloc)
 
         m = args.model
-        save_result(f"Exp_{m}_{args.dataset}.log", args, mrr_lists, gpu_usage_list, time_usage_list, not args.no_log)
+        save_result(f"Exp_{m}_{args.dataset}{'_minibatch' if args.minibatch else ''}.log", args, mrr_lists, gpu_usage_list, time_usage_list, not args.no_log)

@@ -25,8 +25,7 @@ class VgrnnLinkPrediction(LinkPrediction):
             
             kld_loss, nll_loss, enc_mean, prior_mean, H_prev = model(data, H_prev)
 
-            pos_edges = target.edge_index.to(device)
-            neg_edges = self.negative_sampling(target).to(device)
+            pos_edges, neg_edges = self.negative_sampling(target, device)
             loss = model.train_step(enc_mean, pos_edges, neg_edges) + kld_loss + nll_loss
             loss_list.append(loss.item())
             count_list.append(pos_edges.size(1)+neg_edges.size(1))
@@ -83,7 +82,8 @@ class VgrnnLinkPrediction(LinkPrediction):
         result_list = []
         H_prev = None
 
-        optimizer = torch.optim.Adam(params=model.parameters(),weight_decay=args.weight_decay,lr=args.lr)
+        # https://github.com/pytorch/pytorch/issues/113758
+        optimizer = torch.optim.Adam(params=model.parameters(),weight_decay=args.weight_decay,lr=args.lr, foreach=False)
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
 
         best_loss = float('inf')

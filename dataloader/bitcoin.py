@@ -12,8 +12,8 @@ from torch_geometric.utils import negative_sampling, degree, to_undirected
 import torch_geometric.utils as tgu
 from tqdm import tqdm
 from dataloader.utils import safe_negative_sampling, EvolveGCNDS, GraphPairDS
-from dataloader.utils import LRUUpdater
-
+from dataloader.utils import simple_to_undirected
+#from dataloader.cluster import ClusterData
 
 class BitcoinLoaderFactory:
     def __init__(self, ds: Dataset, node_feat_type='onehot-id', negative_sampling=1000):
@@ -25,7 +25,7 @@ class BitcoinLoaderFactory:
         self._num_neg = negative_sampling
 
         if node_feat_type == 'onehot-id':
-            self.x = torch.eye(self._num_nodes).to_sparse()
+            self.x = torch.eye(self._num_nodes)#.to_sparse() 这里sparse小数据没啥用，大数据后面dense一样爆内存
             self._node_feats_dim = self._num_nodes
         elif node_feat_type == 'dummy':
             self.x = torch.ones((self._num_nodes, 1))
@@ -40,10 +40,10 @@ class BitcoinLoaderFactory:
         ds = []
         for i, delta in tqdm(enumerate(self.ds[:split[2]]), desc='Generating'):
             delta.x = self.x
-            indices, attr = tgu.to_undirected(delta.edge_index, delta.edge_attr)
-            values = torch.ones(len(indices[0]))
-            adj = torch.sparse.FloatTensor(indices, values, delta.size()).coalesce()
-            delta.adj = adj
+            indices, attr = tgu.to_undirected(delta.edge_index, delta.edge_attr, self.num_nodes, reduce='max')
+            # values = torch.ones(len(indices[0]))
+            # adj = torch.sparse_coo_tensor(indices, values, delta.size()).coalesce()
+            # delta.adj = adj
             delta.raw_edge_index = delta.edge_index
             delta.neg_edge_index = safe_negative_sampling(delta, self._num_neg, device=device)  # neg sampling before undirected
             delta.edge_index = indices
@@ -79,18 +79,20 @@ class BitcoinLoaderFactory:
                 attr = self.ds[i-1].edge_attr
             #attr = torch.cat([torch.ones_like(self.ds[i-j].edge_attr) * j for j in range(1, window)], dim=0).double()
             #indices, attr = tgu.coalesce(indices, attr, self.num_nodes, reduce='max')
-            indices, attr = tgu.to_undirected(indices, attr, self.num_nodes, reduce='none')
-            data.adj = torch.sparse.FloatTensor(indices, torch.ones(len(indices[0])), delta.size()).coalesce()
+            indices, attr = simple_to_undirected(indices, attr)  # avoid coalesce, retain duplicate edges
+            # data.adj = torch.sparse_coo_tensor(indices, torch.ones(len(indices[0])), delta.size()).coalesce()
             data.edge_index = indices
             #attr[:, -1] = (attr[:, -1].max() - attr[:, -1]) / self.ds.frequency
             attr[:, -1] = (self.ds.frequency*(i+1) - attr[:, -1]) / self.ds.frequency
             data.edge_attr = attr
+            #data.target_edge_index = delta.edge_index
+            #data.clusters = ClusterData(data, 100)
 
             target = Data()
             target.x = self.x
             indices = delta.edge_index
-            values = torch.ones(len(indices[0]))
-            target.adj = torch.sparse.FloatTensor(indices, values, delta.size()).coalesce()
+            # values = torch.ones(len(indices[0]))
+            # target.adj = torch.sparse_coo_tensor(indices, values, delta.size()).coalesce()
             target.edge_index = indices
             target.neg_edge_index = safe_negative_sampling(target, self._num_neg, device=device)
             ds.append((data, target))
@@ -125,8 +127,8 @@ class BitcoinLoaderFactory:
             indices = data.edge_index
             attr = data.edge_attr
             attr[:, -1] = (self.ds.frequency*(i+1) - attr[:, -1]) / self.ds.frequency
-            indices, attr = tgu.to_undirected(indices, attr, self.num_nodes, reduce='none')
-            data.adj = torch.sparse.FloatTensor(indices, torch.ones(len(indices[0])), data.size()).coalesce()
+            indices, attr = tgu.to_undirected(indices, attr, self.num_nodes, reduce='max')
+            # data.adj = torch.sparse_coo_tensor(indices, torch.ones(len(indices[0])), data.size()).coalesce()
             
             data.edge_index = indices
             data.edge_attr = attr
@@ -172,6 +174,6 @@ class BitcoinLoaderFactory:
         for degree in degree_list:
             idx = torch.cat([torch.arange(self.num_nodes).view(1, -1), degree.view(1, -1)])
             val = torch.ones(self._num_nodes)
-            sp_feat = torch.sparse.FloatTensor(idx, val, [self._num_nodes, max_degree+1])
+            sp_feat = torch.sparse_coo_tensor(idx, val, [self._num_nodes, max_degree+1])
             feat_list.append(sp_feat)
         return feat_list

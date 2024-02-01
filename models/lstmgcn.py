@@ -8,6 +8,7 @@ from models.base import BaseLPModel
 
 
 # from Dyted
+# https://github.com/Kaike-Zhang/DyTed/blob/main/model/LSTMGCN/LSTM_GCN.py
 class LSTMGCN(BaseLPModel):
     def __init__(self, n_node, n_feat, n_hidden, n_layers=2, dropout=0.1, bias=False):
         super().__init__()

@@ -21,8 +21,7 @@ class RolandLinkPrediction(LinkPrediction):
         data = data.to(device)
         h, _ = model(data, H_prev)
         
-        pos_edges = target.edge_index.to(device)
-        neg_edges = self.negative_sampling(target).to(device)
+        pos_edges, neg_edges = self.negative_sampling(target, device)
         loss = model.train_step(h, pos_edges, neg_edges)
 
         optimizer.zero_grad()
@@ -85,7 +84,8 @@ class RolandLinkPrediction(LinkPrediction):
             result_list.append(mets)
             count_list.append(_cnt)
 
-            optimizer = torch.optim.Adam(params=model.parameters(),weight_decay=args.weight_decay,lr=args.lr)
+            # https://github.com/pytorch/pytorch/issues/113758
+            optimizer = torch.optim.Adam(params=model.parameters(),weight_decay=args.weight_decay,lr=args.lr, foreach=False)
             lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
 
             best_loss = np.inf# if t == 0 else val_loss

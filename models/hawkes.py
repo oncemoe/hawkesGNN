@@ -6,7 +6,8 @@ from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.inits import zeros, glorot
 from torch_geometric.nn.conv.gcn_conv import gcn_norm, Linear
 
-from torch_geometric.utils import add_remaining_self_loops,  softmax
+from torch_geometric.utils import add_remaining_self_loops,  softmax, coalesce
+from torch_geometric.utils.coalesce import maybe_num_nodes
 from torch_scatter import scatter_add
 import torch.nn.functional as F
 from typing import Optional, Tuple, Union
@@ -16,73 +17,53 @@ from torch_geometric.typing import (
     Size,
 )
 import math
-from typing import Optional, Tuple, Union
 
-import torch
-import torch.nn.functional as F
-from torch import Tensor
 
-from torch_geometric.nn.conv import MessagePassing
-from torch_geometric.nn.dense.linear import Linear
-from torch_geometric.typing import Adj, OptTensor, PairTensor, SparseTensor
-from torch_geometric.utils import softmax
+# return 1 dimensional norm
+def hawkes_norm(edge_index, shrink_edge_index, num_nodes=None, flow="source_to_target", dtype=None):
+    assert flow in ["source_to_target", "target_to_source"]
+
+    edge_count = torch.ones((shrink_edge_index.size(1), ), dtype=dtype,
+                                    device=shrink_edge_index.device)
+    row, col = shrink_edge_index[0], shrink_edge_index[1]
+    idx = col if flow == "source_to_target" else row
+    deg = scatter_add(edge_count, idx, dim=0, dim_size=num_nodes)
+    deg_inv_sqrt = deg.pow_(-1)
+    deg_inv_sqrt.masked_fill_(deg_inv_sqrt == float('inf'), 0)
+    
+    row = edge_index[0]
+    return deg_inv_sqrt[row]
+
+
+def simple_coalesce(
+    edge_index: Tensor,
+    num_nodes: Optional[int] = None,
+    sort_by_row: bool = True,
+):
+    nnz = edge_index.size(1)
+    num_nodes = maybe_num_nodes(edge_index, num_nodes)
+
+    idx = edge_index.new_empty(nnz + 1)
+    idx[0] = -1
+    idx[1:] = edge_index[1 - int(sort_by_row)]
+    idx[1:].mul_(num_nodes).add_(edge_index[int(sort_by_row)])
+
+    idx[1:], perm = idx[1:].sort()
+    edge_index = edge_index[:, perm]
+    mask = idx[1:] > idx[:-1]
+    
+    if mask.all():
+        shrink_edge_index = edge_index
+    else:
+        shrink_edge_index = edge_index[:, mask]
+        
+    idx = torch.arange(0, nnz, device=edge_index.device)
+    idx.sub_(mask.logical_not_().cumsum(dim=0))
+    
+    return edge_index, shrink_edge_index, perm, idx
+
 
 class HGCNConv(MessagePassing):
-    r"""The graph convolutional operator from the `"Semi-supervised
-    Classification with Graph Convolutional Networks"
-    <https://arxiv.org/abs/1609.02907>`_ paper
-
-    .. math::
-        \mathbf{X}^{\prime} = \mathbf{\hat{D}}^{-1/2} \mathbf{\hat{A}}
-        \mathbf{\hat{D}}^{-1/2} \mathbf{X} \mathbf{\Theta},
-
-    where :math:`\mathbf{\hat{A}} = \mathbf{A} + \mathbf{I}` denotes the
-    adjacency matrix with inserted self-loops and
-    :math:`\hat{D}_{ii} = \sum_{j=0} \hat{A}_{ij}` its diagonal degree matrix.
-    The adjacency matrix can include other values than :obj:`1` representing
-    edge weights via the optional :obj:`edge_weight` tensor.
-
-    Its node-wise formulation is given by:
-
-    .. math::
-        \mathbf{x}^{\prime}_i = \mathbf{\Theta}^{\top} \sum_{j \in
-        \mathcal{N}(v) \cup \{ i \}} \frac{e_{j,i}}{\sqrt{\hat{d}_j
-        \hat{d}_i}} \mathbf{x}_j
-
-    with :math:`\hat{d}_i = 1 + \sum_{j \in \mathcal{N}(i)} e_{j,i}`, where
-    :math:`e_{j,i}` denotes the edge weight from source node :obj:`j` to target
-    node :obj:`i` (default: :obj:`1.0`)
-
-    Args:
-        in_channels (int): Size of each input sample, or :obj:`-1` to derive
-            the size from the first input(s) to the forward method.
-        out_channels (int): Size of each output sample.
-        improved (bool, optional): If set to :obj:`True`, the layer computes
-            :math:`\mathbf{\hat{A}}` as :math:`\mathbf{A} + 2\mathbf{I}`.
-            (default: :obj:`False`)
-        cached (bool, optional): If set to :obj:`True`, the layer will cache
-            the computation of :math:`\mathbf{\hat{D}}^{-1/2} \mathbf{\hat{A}}
-            \mathbf{\hat{D}}^{-1/2}` on first execution, and will use the
-            cached version for further executions.
-            This parameter should only be set to :obj:`True` in transductive
-            learning scenarios. (default: :obj:`False`)
-        normalize (bool, optional): Whether to add self-loops and compute
-            symmetric normalization coefficients on the fly.
-            (default: :obj:`True`)
-        bias (bool, optional): If set to :obj:`False`, the layer will not learn
-            an additive bias. (default: :obj:`True`)
-        **kwargs (optional): Additional arguments of
-            :class:`torch_geometric.nn.conv.MessagePassing`.
-
-    Shapes:
-        - **input:**
-          node features :math:`(|\mathcal{V}|, F_{in})`,
-          edge indices :math:`(2, |\mathcal{E}|)`,
-          edge weights :math:`(|\mathcal{E}|)` *(optional)*
-        - **output:** node features :math:`(|\mathcal{V}|, F_{out})`
-    """
-
-
     def __init__(self, n_node: int, in_channels: int, out_channels: int, dropout=0,
                 bias: bool = False, skip=False, normalize: bool = False, no_decay=False, **kwargs):
         """
@@ -123,29 +104,27 @@ class HGCNConv(MessagePassing):
         zeros(self.bias)
 
 
-    def forward(self, x: Tensor, edge_index: Tensor, edge_age: Tensor) -> Tensor:
-        edge_weight = torch.exp(-F.relu(edge_age.view(-1, 1) * self.decay[edge_index[0]]))
+    def forward(self, x: Tensor, edge_index: Tensor, edge_age: Tensor, node_id=None) -> Tensor:
+        # hawkes excitation entity
+        if node_id is not None:
+            C = torch.exp(-F.relu(edge_age.view(-1, 1) * self.decay[node_id][edge_index[0]]))
+        else:
+            C = torch.exp(-F.relu(edge_age.view(-1, 1) * self.decay[edge_index[0]]))
         
         if self.training and self.dropout > 0:
             edge_mask = torch.rand(edge_index.size(1), device=edge_index.device) >= self.dropout
             edge_index = edge_index[:, edge_mask]
-            edge_weight = edge_weight[edge_mask] / (1-self.dropout)
+            C = C[edge_mask] / (1-self.dropout)
 
-        #print(edge_weight.sum(), self.decay.sum())
-        #print(self.decay.min().item(), self.decay.mean().item(), self.decay.max().item())
-        #print(edge_weight.min().item(), edge_weight.mean().item(), edge_weight.max().item())
-
-        # gcn norm is bad for hawkes
-        # if self.normalize:
-        #     edge_index, edge_weight = gcn_norm(  # yapf: disable
-        #         edge_index, edge_weight, x.size(self.node_dim),
-        #         False, False, self.flow, x.dtype)
+        shrink_edge_index = coalesce(edge_index) # A
+        norm = hawkes_norm(  # yapf: disable
+            edge_index, shrink_edge_index, x.size(self.node_dim),
+            self.flow, x.dtype)
 
         h = self.lin(x)
 
         # propagate_type: (x: Tensor, edge_weight: Tensor)
-        out = self.propagate(edge_index, x=h, edge_weight=edge_weight,
-                             size=None)
+        out = self.propagate(edge_index, x=h, edge_weight=C * norm.view(-1, 1))
 
         if self.bias is not None:
             out = out + self.bias
@@ -164,78 +143,6 @@ class HGCNConv(MessagePassing):
 
 
 class HGATConv(MessagePassing):
-    r"""The graph attentional operator from the `"Graph Attention Networks"
-    <https://arxiv.org/abs/1710.10903>`_ paper
-
-    .. math::
-        \mathbf{x}^{\prime}_i = \alpha_{i,i}\mathbf{\Theta}\mathbf{x}_{i} +
-        \sum_{j \in \mathcal{N}(i)} \alpha_{i,j}\mathbf{\Theta}\mathbf{x}_{j},
-
-    where the attention coefficients :math:`\alpha_{i,j}` are computed as
-
-    .. math::
-        \alpha_{i,j} =
-        \frac{
-        \exp\left(\mathrm{LeakyReLU}\left(\mathbf{a}^{\top}
-        [\mathbf{\Theta}\mathbf{x}_i \, \Vert \, \mathbf{\Theta}\mathbf{x}_j]
-        \right)\right)}
-        {\sum_{k \in \mathcal{N}(i) \cup \{ i \}}
-        \exp\left(\mathrm{LeakyReLU}\left(\mathbf{a}^{\top}
-        [\mathbf{\Theta}\mathbf{x}_i \, \Vert \, \mathbf{\Theta}\mathbf{x}_k]
-        \right)\right)}.
-
-    If the graph has multi-dimensional edge features :math:`\mathbf{e}_{i,j}`,
-    the attention coefficients :math:`\alpha_{i,j}` are computed as
-
-    .. math::
-        \alpha_{i,j} =
-        \frac{
-        \exp\left(\mathrm{LeakyReLU}\left(\mathbf{a}^{\top}
-        [\mathbf{\Theta}\mathbf{x}_i \, \Vert \, \mathbf{\Theta}\mathbf{x}_j
-        \, \Vert \, \mathbf{\Theta}_{e} \mathbf{e}_{i,j}]\right)\right)}
-        {\sum_{k \in \mathcal{N}(i) \cup \{ i \}}
-        \exp\left(\mathrm{LeakyReLU}\left(\mathbf{a}^{\top}
-        [\mathbf{\Theta}\mathbf{x}_i \, \Vert \, \mathbf{\Theta}\mathbf{x}_k
-        \, \Vert \, \mathbf{\Theta}_{e} \mathbf{e}_{i,k}]\right)\right)}.
-
-    Args:
-        in_channels (int or tuple): Size of each input sample, or :obj:`-1` to
-            derive the size from the first input(s) to the forward method.
-            A tuple corresponds to the sizes of source and target
-            dimensionalities.
-        out_channels (int): Size of each output sample.
-        heads (int, optional): Number of multi-head-attentions.
-            (default: :obj:`1`)
-        concat (bool, optional): If set to :obj:`False`, the multi-head
-            attentions are averaged instead of concatenated.
-            (default: :obj:`True`)
-        negative_slope (float, optional): LeakyReLU angle of the negative
-            slope. (default: :obj:`0.2`)
-        dropout (float, optional): Dropout probability of the normalized
-            attention coefficients which exposes each node to a stochastically
-            sampled neighborhood during training. (default: :obj:`0`)
-        edge_dim (int, optional): Edge feature dimensionality (in case
-            there are any). (default: :obj:`None`)
-        bias (bool, optional): If set to :obj:`False`, the layer will not learn
-            an additive bias. (default: :obj:`True`)
-        **kwargs (optional): Additional arguments of
-            :class:`torch_geometric.nn.conv.MessagePassing`.
-
-    Shapes:
-        - **input:**
-          node features :math:`(|\mathcal{V}|, F_{in})` or
-          :math:`((|\mathcal{V_s}|, F_{s}), (|\mathcal{V_t}|, F_{t}))`
-          if bipartite,
-          edge indices :math:`(2, |\mathcal{E}|)`,
-          edge features :math:`(|\mathcal{E}|, D)` *(optional)*
-        - **output:** node features :math:`(|\mathcal{V}|, H * F_{out})` or
-          :math:`((|\mathcal{V}_t|, H * F_{out}))` if bipartite.
-          If :obj:`return_attention_weights=True`, then
-          :math:`((|\mathcal{V}|, H * F_{out}),
-          ((2, |\mathcal{E}|), (|\mathcal{E}|, H)))`
-          or :math:`((|\mathcal{V_t}|, H * F_{out}), ((2, |\mathcal{E}|),
-          (|\mathcal{E}|, H)))` if bipartite
-    """
     def __init__(
         self,
         n_node: int,
@@ -273,7 +180,7 @@ class HGATConv(MessagePassing):
                                   weight_initializer='glorot')
             self.lin_dst = Linear(in_channels[1], heads * out_channels, False,
                                   weight_initializer='glorot')
-        # self.scale = Linear(1, 1, bias=False, weight_initializer='glorot')
+        self.decay = Parameter(torch.ones(n_node, 1))
         if skip:
             self.skip = Linear(in_channels, out_channels, bias=False,
                           weight_initializer='glorot')
@@ -311,7 +218,7 @@ class HGATConv(MessagePassing):
         zeros(self.bias)
 
     def forward(self, x: Tensor, edge_index: Tensor, edge_age: Tensor,
-                edge_attr: Tensor = None, size = None,
+                edge_attr: Tensor = None, node_id=None, size = None,
                 return_attention_weights=None):
         r"""Runs the forward pass of the module.
 
@@ -332,6 +239,16 @@ class HGATConv(MessagePassing):
         # if self.training and self.dropout > 0:
         #     edge_mask = torch.rand(edge_index.size(1), device=edge_index.device) >= self.dropout
         #     edge_index = edge_index[:, edge_mask]
+        
+        if node_id is not None:
+            edge_weight = F.relu(edge_age.view(-1, 1) * self.decay[node_id][edge_index[0]])
+        else:
+            edge_weight = F.relu(edge_age.view(-1, 1) * self.decay[edge_index[0]])
+        
+        if self.training and self.dropout > 0:
+            edge_mask = torch.rand(edge_index.size(1), device=edge_index.device) >= self.dropout
+            edge_index = edge_index[:, edge_mask]
+            edge_weight = edge_weight[edge_mask] / (1-self.dropout)
 
         H, C = self.heads, self.out_channels
         # We first transform the input node features. If a tuple is passed, we
@@ -347,7 +264,7 @@ class HGATConv(MessagePassing):
         alpha_dst = None if x_dst is None else (x_dst * self.att_dst).sum(-1)
         alpha = (alpha_src, alpha_dst)
         # edge_updater_type: (alpha: OptPairTensor, edge_attr: OptTensor)
-        alpha = self.edge_updater(edge_index, alpha=alpha, edge_attr=edge_attr, edge_age=edge_age)# * edge_weight
+        alpha = self.edge_updater(edge_index, alpha=alpha, edge_attr=edge_attr, edge_weight=edge_weight)
 
         # propagate_type: (x: OptPairTensor, alpha: Tensor)
         out = self.propagate(edge_index, x=h, alpha=alpha, size=size)
@@ -370,7 +287,7 @@ class HGATConv(MessagePassing):
 
 
     def edge_update(self, alpha_j: Tensor, alpha_i: OptTensor,
-                    edge_attr: OptTensor, edge_age: OptTensor, index: Tensor, ptr: OptTensor,
+                    edge_attr: OptTensor, edge_weight: OptTensor, index: Tensor, ptr: OptTensor,
                     size_i: Optional[int]) -> Tensor:
         # Given edge-level attention coefficients for source and target nodes,
         # we simply need to sum them up to "emulate" concatenation:
@@ -388,8 +305,8 @@ class HGATConv(MessagePassing):
         alpha = F.leaky_relu(alpha, self.negative_slope)
         alpha = softmax(alpha, index, ptr, size_i)
         alpha = F.dropout(alpha, p=self.dropout, training=self.training)
-        alpha = torch.exp(-edge_age.view(-1, 1) * alpha)
-        #alpha = torch.exp(-F.relu(self.scale(edge_age.view(-1, 1)) * alpha))
+        #alpha = torch.exp(-edge_age.view(-1, 1) * alpha)
+        alpha = torch.exp(-edge_weight.view(-1, 1) * alpha)
         return alpha
 
     def message(self, x_j: Tensor, alpha: Tensor) -> Tensor:
@@ -401,6 +318,153 @@ class HGATConv(MessagePassing):
 
 
 
+class HGATConv(MessagePassing):
+    def __init__(
+        self,
+        n_node: int,
+        in_channels: int,
+        out_channels: int,
+        dropout: float = 0.0,
+        bias: bool = False,
+        skip = False,
+        heads: int = 1,
+        concat: bool = True,
+        negative_slope: float = 0.2,
+        edge_dim = None,
+        **kwargs,
+    ):
+        kwargs.setdefault('aggr', 'add')
+        super().__init__(node_dim=0, **kwargs)
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.heads = heads
+        self.concat = concat
+        self.negative_slope = negative_slope
+        self.dropout = dropout
+        self.edge_dim = edge_dim
+        self.do_skip = skip
+
+        # In case we are operating in bipartite graphs, we apply separate
+        # transformations 'lin_src' and 'lin_dst' to source and target nodes:
+        if isinstance(in_channels, int):
+            self.lin_src = Linear(in_channels, heads * out_channels,
+                                  bias=False, weight_initializer='glorot')
+            self.lin_dst = self.lin_src
+        else:
+            self.lin_src = Linear(in_channels[0], heads * out_channels, False,
+                                  weight_initializer='glorot')
+            self.lin_dst = Linear(in_channels[1], heads * out_channels, False,
+                                  weight_initializer='glorot')
+        self.decay = Parameter(torch.ones(n_node, 1))
+        if skip:
+            self.skip = Linear(in_channels, out_channels, bias=False,
+                          weight_initializer='glorot')
+
+        # The learnable parameters to compute attention coefficients:
+        self.att_src = Parameter(torch.Tensor(1, heads, out_channels))
+        self.att_dst = Parameter(torch.Tensor(1, heads, out_channels))
+
+        if edge_dim is not None:
+            self.lin_edge = Linear(edge_dim, heads * out_channels, bias=False,
+                                   weight_initializer='glorot')
+            self.att_edge = Parameter(torch.Tensor(1, heads, out_channels))
+        else:
+            self.lin_edge = None
+            self.register_parameter('att_edge', None)
+
+        if bias and concat:
+            self.bias = Parameter(torch.Tensor(heads * out_channels))
+        elif bias and not concat:
+            self.bias = Parameter(torch.Tensor(out_channels))
+        else:
+            self.register_parameter('bias', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        self.lin_src.reset_parameters()
+        self.lin_dst.reset_parameters()
+        if self.lin_edge is not None:
+            self.lin_edge.reset_parameters()
+        glorot(self.att_src)
+        glorot(self.att_dst)
+        glorot(self.att_edge)
+        zeros(self.bias)
+
+    def forward(self, x: Tensor, edge_index: Tensor, edge_age: Tensor, node_id=None, size = None,
+                return_attention_weights=None):
+        r"""Runs the forward pass of the module.
+
+        Args:
+            return_attention_weights (bool, optional): If set to :obj:`True`,
+                will additionally return the tuple
+                :obj:`(edge_index, attention_weights)`, holding the computed
+                attention weights for each edge. (default: :obj:`None`)
+        """        
+        edge_index, shrink_edge_index, perm, idx = simple_coalesce(edge_index)
+        
+        H, C = self.heads, self.out_channels
+        # We first transform the input node features. If a tuple is passed, we
+        # transform source and target node features via separate weights:
+        assert x.dim() == 2, "Static graphs not supported in 'GATConv'"
+        x_src = x_dst = self.lin_src(x).view(-1, H, C)
+        h = (x_src, x_dst)
+
+        # Next, we compute node-level attention coefficients, both for source
+        # and target nodes (if present):
+        delta_src = (x_src * self.att_src).sum(dim=-1)
+        delta_dst = None if x_dst is None else (x_dst * self.att_dst).sum(-1)
+        delta = (delta_src, delta_dst)
+        # edge_updater_type: (alpha: OptPairTensor, edge_attr: OptTensor)
+        delta = self.edge_updater(shrink_edge_index, delta=delta)     # sensitivity between two nodes, softmax guarantee positive
+        
+        alpha = torch.exp(- edge_age[perm].view(-1, 1) * delta[idx])     # 
+        norm = hawkes_norm(  # yapf: disable
+            edge_index, shrink_edge_index, x.size(self.node_dim), self.flow, x.dtype)
+        
+        # propagate_type: (x: OptPairTensor, alpha: Tensor)
+        out = self.propagate(edge_index, x=h, alpha=alpha * norm.view(-1, 1), size=size)
+
+        if self.concat:
+            out = out.view(-1, self.heads * self.out_channels)
+        else:
+            out = out.mean(dim=1)
+
+        if self.do_skip:
+            out = out + self.skip(x)
+
+        if self.bias is not None:
+            out = out + self.bias
+
+        if isinstance(return_attention_weights, bool):
+            return out, (edge_index, alpha)
+        else:
+            return out
+
+
+    def edge_update(self, delta_j: Tensor, delta_i: OptTensor,
+                    index: Tensor, ptr: OptTensor, size_i: Optional[int]) -> Tensor:
+        # Given edge-level attention coefficients for source and target nodes,
+        # we simply need to sum them up to "emulate" concatenation:
+        delta = delta_j if delta_i is None else delta_j + delta_i
+        if index.numel() == 0:
+            return delta
+        
+        delta = F.leaky_relu(delta, self.negative_slope)
+        delta = softmax(delta, index, ptr, size_i)
+        delta = F.dropout(delta, p=self.dropout, training=self.training)
+        return delta
+
+    def message(self, x_j: Tensor, alpha: Tensor) -> Tensor:
+        return alpha.unsqueeze(-1) * x_j
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.in_channels}, '
+                f'{self.out_channels}, heads={self.heads})')
+
+
 from models.predictor import LinkPredictor, JodieLinkPredictor, CosinePredictor
 from models.hawkes import HGCNConv, HGATConv
 from torch_geometric.nn import GraphConv, GATConv, GCNConv, TransformerConv
@@ -409,12 +473,13 @@ import numpy as np
 
 class HGNNLP(BaseLPModel):
     def __init__(self, n_node, n_feat, n_edge, n_hidden, dropout=0.1, bias = False, layer_skip=False, 
-                         name='gcn', layers=2, heads=1, time_encoder=False, jodie=False, initial_skip=False):
+                         name='gcn', layers=2, heads=1, time_encoder=False, jodie=False, batch_norm=False, initial_skip=False):
         super().__init__()
         assert name in ['gcn', 'gat', 'hgcn', 'hgat']
+        self.n_node = n_node
         self.name = name
         self.skip = initial_skip
-        self.input_fc = torch.nn.Linear(n_feat, n_hidden, bias=bias)
+        self.input_fc = torch.nn.Linear(n_feat, n_hidden, bias=False)
 
         if name == 'gcn':
             self.model = torch.nn.ModuleList([GCNConv(n_hidden, n_hidden, add_self_loops=False, bias=bias) for _ in range(layers)])
@@ -425,6 +490,10 @@ class HGNNLP(BaseLPModel):
         elif name == 'hgat':
             self.model = torch.nn.ModuleList([HGATConv(n_node, n_hidden, n_hidden // heads, dropout, bias, layer_skip, heads=heads, edge_dim=n_edge) for _ in range(layers)])
         self.act = torch.nn.ReLU()
+        if batch_norm:
+            self.batch_norms = nn.ModuleList([nn.BatchNorm1d(n_hidden) for _ in range(layers)])
+        else:
+            self.register_buffer('batch_norms', None)
         self.drop = torch.nn.Dropout(dropout)
         n_out = n_hidden + n_hidden if initial_skip else n_hidden
         self.predictor = LinkPredictor(n_out, n_hidden, 1, 2, dropout)
@@ -442,9 +511,15 @@ class HGNNLP(BaseLPModel):
             elif self.name == 'gat':
                 h = net(h_stack[-1], data.edge_index, edge_attr)
             elif self.name == 'hgcn':
-                h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:])
+                if hasattr(data, 'n_id'):  # speical case for mini batch
+                    h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:], data.n_id)
+                else:
+                    h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:])
             elif self.name == 'hgat':
-                h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:], edge_attr)
+                h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:])
+            
+            if self.batch_norms:
+                h = self.batch_norms[layer](h)
     
             if layer < len(self.model)-1:
                 h = self.act(h)
