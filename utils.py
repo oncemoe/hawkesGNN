@@ -125,7 +125,8 @@ def save_result(filename, args, mrr_lists, gpu_usage_list, time_usage_list, log=
     with open(fn, 'a') as f:
         f.write(f"Experiment finished at {datetime.datetime.now():%Y-%m-%d %H:%M:%S}\n")
         for k, v in args._get_kwargs():
-            f.write(f"{k} = {v}\n")
+            if k != 'exp_name': # added late, dont want to change previous codes
+                f.write(f"{k} = {v}\n")
         f.write(f"Average max GPU memory allocated: {np.mean(gpu_usage_list):.2f} MB\n")
         f.write(", ".join([f"{x:.2f}" for x in gpu_usage_list]))
         f.write('\n')

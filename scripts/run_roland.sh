@@ -17,13 +17,24 @@ python main.py --device $gpu --runs $runs --model roland --roland_is_meta --data
 
 python main.py --device $gpu --runs $runs --model roland --roland_is_meta --dataset uci
 
-python main.py --device $gpu --runs $runs --model roland --roland_is_meta --dataset as733 --weight_decay 1e-5
+python main.py --device $gpu --runs $runs --model roland --roland_is_meta --dataset redt
 
+python main.py --device $gpu --runs $runs --model roland --roland_is_meta --dataset redb
 
-python main.py --device $gpu --runs $runs --model roland --dataset bitcoinotc
+python main.py --device $gpu --runs $runs --model roland --roland_is_meta --dataset as733 --n_neg_train 10 --n_neg_test 100
 
-python main.py --device $gpu --runs $runs --model roland --dataset bitcoinalpha
+python main.py --device $gpu --runs $runs --model roland --roland_is_meta --dataset sbm --n_neg_train 10 --n_neg_test 100
 
-python main.py --device $gpu --runs $runs --model roland --dataset uci
+python main.py --device $gpu --runs $runs --model roland --roland_is_meta --dataset stackoverflow --n_neg_train 10 --n_neg_test 100 --node_feat dummy
 
-python main.py --device $gpu --runs $runs --model roland --dataset as733 --weight_decay 1e-5
+# python main.py --device $gpu --runs $runs --model roland --dataset bitcoinotc
+
+# python main.py --device $gpu --runs $runs --model roland --dataset bitcoinalpha
+
+# python main.py --device $gpu --runs $runs --model roland --dataset uci
+
+# python main.py --device $gpu --runs $runs --model roland --dataset as733 --n_neg_train 10 --n_neg_test 100
+
+# python main.py --device $gpu --runs $runs --model roland --dataset sbm --n_neg_train 10 --n_neg_test 100
+
+# python main.py --device $gpu --runs $runs --model roland --dataset stackoverflow  --n_neg_train 10 --n_neg_test 100 --node_feat dummy

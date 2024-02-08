@@ -10,6 +10,13 @@ from utils import seed_everything, generate_random_seeds, save_result
 from models.base import BaseLPModel
 from train import LinkPrediction
 from torch_geometric.loader import NeighborLoader
+import random
+import time
+
+
+def generate_random_seed():
+    random.seed(int(time.time()))
+    return random.randint(1, 999999999)
 
 class ScalableLinkPrediction(LinkPrediction):
 
@@ -21,12 +28,12 @@ class ScalableLinkPrediction(LinkPrediction):
             assert len(batch) == 2  # scalable only for pair of snaps
             data, target = batch[0], batch[1]
             
-            pos_edges, neg_edges = self.negative_sampling(target, device)
+            pos_edges, neg_edges = self.negative_sampling(target, 'cpu')
             alpha = neg_edges.size(1) / pos_edges.size(1)
             count = pos_edges.size(1)+neg_edges.size(1)
             loader = NeighborLoader(
                 data,
-                num_neighbors=[-1] * self.n_layers,
+                num_neighbors=[20, 10, 5, 1],#[-1] * self.n_layers,
                 batch_size=self.batch_size
             )
             
@@ -36,6 +43,8 @@ class ScalableLinkPrediction(LinkPrediction):
             losses = []
 
             # Step 1      
+            seed = generate_random_seed()
+            seed_everything(seed)
             with torch.no_grad():
                 for minibatch in loader:
                     bs = minibatch.batch_size
@@ -80,6 +89,7 @@ class ScalableLinkPrediction(LinkPrediction):
             # print(H_grad_real[:10])
 
             # Step 3
+            seed_everything(seed)
             optimizer.zero_grad()
             for minibatch in loader:
                 bs = minibatch.batch_size

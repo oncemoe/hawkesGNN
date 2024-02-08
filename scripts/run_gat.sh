@@ -11,10 +11,14 @@ runs=3
 
 echo "run experiments on device $gpu, runs=$runs"
 
-python main.py --device $gpu --runs $runs --model gat --bias
+python main.py --device $gpu --runs $runs --model gat --bias --bn
 
-python main.py --device $gpu --runs $runs --model gat --bias --dataset bitcoinalpha
+python main.py --device $gpu --runs $runs --model gat --bias --bn --dataset bitcoinalpha
 
-python main.py --device $gpu --runs $runs --model gat --bias --dataset uci
+python main.py --device $gpu --runs $runs --model gat --bias --bn --dataset uci
 
-python main.py --device $gpu --runs $runs --model gat --bias --dataset as733 --patiance 20 --weight_decay 1e-5
+python main.py --device $gpu --runs $runs --model gat --bias --bn --dataset as733  --n_neg_train 10 --n_neg_test 100
+
+python main.py --device $gpu --runs $runs --model gat --bias --bn --dataset sbm  --n_neg_train 10 --n_neg_test 100
+
+python main.py --device $gpu --runs $runs --model gat --bias --bn --dataset stackoverflow --patiance 10 --n_neg_train 10 --n_neg_test 100 --node_feat dummy

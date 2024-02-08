@@ -17,4 +17,12 @@ python main.py --device $gpu --runs $runs --model vgrnn --dataset bitcoinalpha
 
 python main.py --device $gpu --runs $runs --model vgrnn --dataset uci
 
-python main.py --device $gpu --runs $runs --model vgrnn --dataset as733 --weight_decay 1e-5
+python main.py --device $gpu --runs $runs --model vgrnn --dataset redt
+
+python main.py --device $gpu --runs $runs --model vgrnn --dataset redb
+
+python main.py --device $gpu --runs $runs --model vgrnn --dataset as733 --n_neg_train 10 --n_neg_test 100
+
+python main.py --device $gpu --runs $runs --model vgrnn --dataset sbm --n_neg_train 10 --n_neg_test 100
+
+python main.py --device $gpu --runs $runs --model vgrnn --dataset stackoverflow --n_neg_train 10 --n_neg_test 100 --node_feat dummy

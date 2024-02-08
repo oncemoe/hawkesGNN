@@ -15,7 +15,7 @@ def build_model(args, factory):
         from models.hawkes import HGNNLP
         model = HGNNLP(factory.num_nodes, factory.node_feats_dim, factory.edge_feats_dim,
                             args.n_hidden, dropout=args.dropout, bias=args.bias, name=args.model,
-                            layers=args.n_layers, heads=args.heads, batch_norm=args.bn, time_encoder=args.time_encoder).to(args.device)
+                            layers=args.n_layers, heads=args.heads, batch_norm=args.bn, norm=args.norm_type).to(args.device)
     elif args.model == 'dysat':
         from models.dysat import DySAT
         model = DySAT(factory.num_nodes, factory.node_feats_dim, args.n_hidden, window=args.window-1, # input len = args.window - 1
@@ -38,6 +38,10 @@ def build_model(args, factory):
         from models.wingnn import WinGNN
         model = WinGNN(factory.num_nodes, factory.node_feats_dim, factory.edge_feats_dim, args.n_hidden, 
                             dropout=args.dropout).to(args.device)
+    elif args.model == 'htgn':
+        from models.htgn.HTGN import HTGN
+        model = HTGN(factory.num_nodes, factory.node_feats_dim, factory.edge_feats_dim,
+                            args.n_hidden, dropout=args.dropout, window=args.window-1).to(args.device)
     return model
 
 
@@ -51,11 +55,11 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='bitcoinotc')
     parser.add_argument('--model', type=str, default='hgat', choices=['gcn', 'gat', 
                         'hgcn', 'hgat', 'dysat', 'evolve-o', 'evolve-h', 'lstmgcn', 'wdgcn',
-                        'vgrnn', 'roland', 'wingnn']) # 
-    parser.add_argument('--node_feat', type=str, default='onehot-id', choices=['onehot-id', 'dummy'])
+                        'vgrnn', 'roland', 'wingnn', 'htgn']) # 
+    parser.add_argument('--node_feat', type=str, default='dummy', choices=['onehot-id', 'dummy'])
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--log_steps', type=int, default=1)
-    parser.add_argument('--patiance', type=int, default=5)
+    parser.add_argument('--patiance', type=int, default=10)
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--eval_steps', type=int, default=1)
     parser.add_argument('--seed', type=int, default=42)
@@ -64,12 +68,12 @@ if __name__ == "__main__":
     parser.add_argument('--row_mrr', action="store_true")
     
     # general model configuration
-    parser.add_argument('--n_neg_train', type=int, default=100)
-    parser.add_argument('--n_neg_test', type=int, default=1000)
+    parser.add_argument('--n_neg_train', type=int, default=10)
+    parser.add_argument('--n_neg_test', type=int, default=100)
     parser.add_argument('--window', type=int, default=10)
     parser.add_argument('--n_layers', type=int, default=2)
     parser.add_argument('--n_hidden', type=int, default=64)
-    parser.add_argument('--dropout', type=float, default=0)
+    parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--weight_decay', type=float, default=5e-5)
     
@@ -77,10 +81,11 @@ if __name__ == "__main__":
     parser.add_argument('--bias', action="store_true") # bias in layer
     parser.add_argument('--bn', action="store_true")
     parser.add_argument('--time_encoder', action="store_true") # bias in layer
-    parser.add_argument('--heads', type=int, default=1)
+    parser.add_argument('--heads', type=int, default=2)
+    parser.add_argument('--norm_type', type=str, default='snorm', choices=['snorm', 'dnorm', 'hnorm'])
     
     # roland
-    parser.add_argument('--roland_updater', type=str, default='gru', choices=['gru', 'mlp', 'ma', 'gru-ma'])
+    parser.add_argument('--roland_updater', type=str, default='ma', choices=['gru', 'mlp', 'ma', 'gru-ma']) 
     parser.add_argument('--roland_is_meta', action="store_true")
     parser.add_argument('--roland_alpha', type=float, default=0.9)
 
@@ -92,6 +97,7 @@ if __name__ == "__main__":
     parser.add_argument('--test', action="store_true")
     parser.add_argument('--minibatch', action="store_true")
     parser.add_argument('--batch_size', type=int, default=1024)
+    parser.add_argument('--exp_name', type=str, default='')
 
     args = parser.parse_args()
     print(args)
@@ -100,14 +106,17 @@ if __name__ == "__main__":
     device = f'cuda:{args.device}' if torch.cuda.is_available() else 'cpu'
     device = torch.device(device)
     import torch_geometric.transforms as T
-    from datasets import BitcoinOTC, BitcoinAlpha, UCIMessage, AS733, SBM, StackOverflow
+    from datasets import BitcoinOTC, BitcoinAlpha, UCIMessage, AS733, SBM, StackOverflow, RedditTitle, RedditBody
     transform = T.Compose([T.RemoveDuplicatedEdges(reduce='max')]) # for usi-message
 
-    DS = {'bitcoinotc': BitcoinOTC, 'bitcoinalpha': BitcoinAlpha, 
+    DS = {'bitcoinotc': BitcoinOTC, 'bitcoinalpha': BitcoinAlpha, 'redt': RedditTitle, 'redb': RedditBody,
             'uci': UCIMessage, 'as733': AS733, 'as733_full': AS733, 'sbm': SBM, 'stackoverflow': StackOverflow}
     split = {
         'bitcoinotc': [95, 95+14, 95+14+28], 'bitcoinalpha': [95, 95+13, 95+13+28], 
-        'uci': [35, 35+5, 35+5+10], 'as733': [70, 70+10, 70+10+20], 
+        'uci': [35,40,50], 'as733': [70, 70+10, 70+10+20], 
+        'uci': [61, 61+9, 61+9+17],
+        'redt': [122, 122+35, 122+35+17],
+        'redb': [122, 122+35, 122+35+17],
         'sbm': [35,40,50],
         'stackoverflow': [70, 70+10, 70+10+20],
         'as733_full': [int(733*0.7), int(733*0.8), int(733*1)], 
@@ -118,17 +127,16 @@ if __name__ == "__main__":
     }
     if args.test:
         args.window=3
-        split['bitcoinotc'] = [10, 12, 14]
-        split['bitcoinalpha'] = [10, 12, 14]
-        split['uci'] = [10, 12, 14]
-        split['as733'] = [10, 12, 14]
-        split['sbm'] = [10, 12, 14]
+        for k in split.keys():
+            split[k] = [10, 12, 14]
+        split['uci'] = [21, 21 + 3, 21 + 3 + 6]
+        #split['as733'] = [int(733*0.7), int (733*0.8), 733]
 
-    root = {'bitcoinotc': './data/bitcoin', 'bitcoinalpha': './data/bitcoin', 
+    root = {'bitcoinotc': './data/bitcoin', 'bitcoinalpha': './data/bitcoin', 'redt': './data/reddit', 'redb': './data/reddit',
         'uci': './data/uci-msg', 'as733': './data/as-733', 'sbm': './data/sbm', 'as733_full': './data/as-733',
         'stackoverflow': './data/stackoverflow'}
     
-    if args.dataset in ['bitcoinotc', 'bitcoinalpha', 'uci', 'as733', 'as733_full', 'sbm', 'stackoverflow']:
+    if args.dataset in ['bitcoinotc', 'bitcoinalpha', 'uci', 'as733', 'as733_full', 'redt', 'redb', 'sbm', 'stackoverflow']:
         from dataloader import BitcoinLoaderFactory
         dataset = DS[args.dataset](root[args.dataset], transform=transform)
         factory = BitcoinLoaderFactory(dataset, 
@@ -147,7 +155,7 @@ if __name__ == "__main__":
         loaders = factory.get_pair_dataloader(split=split[args.dataset], device=device, window=args.window)
     elif args.model in ['dysat', 'evolve-o', 'evolve-h', 'lstmgcn', 'wdgcn']:
         loaders = factory.get_list_dataloader(split=split[args.dataset], device=device, window=args.window)
-    elif args.model in ['roland', 'vgrnn', 'wingnn']:
+    elif args.model in ['roland', 'vgrnn', 'wingnn', 'htgn']:
         loaders = factory.get_roland_snaps(split=split[args.dataset], device=device)
 
     # sorry for sooo many train logic
@@ -161,6 +169,9 @@ if __name__ == "__main__":
     elif args.model == 'wingnn':
         from train_wingnn import WinGNNLinkPrediction
         lp = WinGNNLinkPrediction(args, build_model)
+    elif args.model == 'htgn':
+        from train_htgn import HTGNLinkPrediction
+        lp = HTGNLinkPrediction(args, build_model)
     else:
         if args.minibatch:
             from train_scalable import ScalableLinkPrediction

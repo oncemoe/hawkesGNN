@@ -5,7 +5,8 @@ from .uci_message import UCIMessage
 from .as733 import AS733
 from .sbm import SBM
 from .stackoverflow import StackOverflow
-
+from .reddit_title import RedditTitle
+from .reddit_body import RedditBody
 __all__ = [
     'BitcoinOTC',
     'BitcoinAlpha',
@@ -14,6 +15,8 @@ __all__ = [
     'AS733',
     'SBM',
     'StackOverflow',
+    'RedditTitle',
+    'RedditBody',
 ]
 
 classes = __all__

@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 from torch.utils import data as td
 import torch
+from torch import Tensor
 import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.data.dataset import Dataset, IndexType
@@ -13,7 +14,31 @@ import torch_geometric.utils as tgu
 from tqdm import tqdm
 from dataloader.utils import safe_negative_sampling, EvolveGCNDS, GraphPairDS
 from dataloader.utils import simple_to_undirected
-#from dataloader.cluster import ClusterData
+import copy
+
+class RolandDSWrapper:
+    def __init__(self, ds_list):
+        self._ds = ds_list
+        self.slices = None
+        
+    def get(self, idx: int) -> Data:
+        return copy.copy(self._ds[idx])  # otherwise gpu memory leak
+    
+    def __len__(self):
+        return len(self._ds)
+    
+    def __getitem__(
+        self,
+        idx: Union[int, np.integer, IndexType],
+    ):
+        if isinstance(idx, slice):
+            return RolandDSWrapper(self._ds[idx])
+        
+        data = self.get(idx)
+        return data
+
+
+  
 
 class BitcoinLoaderFactory:
     def __init__(self, ds: Dataset, node_feat_type='onehot-id', negative_sampling=1000):
@@ -139,7 +164,7 @@ class BitcoinLoaderFactory:
                 data.keep_ratio = (deg / (deg + d2 + 1e-6)).unsqueeze(-1)  # equation 3 in paper
             ds.append(data)
             dp = data
-        return ds, split
+        return RolandDSWrapper(ds), split
 
 
     @property

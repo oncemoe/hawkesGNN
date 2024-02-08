@@ -17,4 +17,8 @@ python main.py --device $gpu --runs $runs --model wingnn --dataset bitcoinalpha
 
 python main.py --device $gpu --runs $runs --model wingnn --dataset uci
 
-python main.py --device $gpu --runs $runs --model wingnn --dataset as733 --weight_decay 1e-5
+python main.py --device $gpu --runs $runs --model wingnn --dataset as733 --n_neg_train 10 --n_neg_test 100
+
+python main.py --device $gpu --runs $runs --model wingnn --dataset sbm --n_neg_train 10 --n_neg_test 100
+
+python main.py --device $gpu --runs $runs --model wingnn --dataset stackoverflow --n_neg_train 10 --n_neg_test 100 --node_feat dummy

@@ -23,6 +23,14 @@ python main.py --device $gpu --runs $runs --model evolve-o --dataset uci
 
 python main.py --device $gpu --runs $runs --model evolve-h  --dataset uci
 
-python main.py --device $gpu --runs $runs --model evolve-o --dataset as733 --patiance 20 --weight_decay 1e-5
+python main.py --device $gpu --runs $runs --model evolve-o --dataset as733  --n_neg_train 10 --n_neg_test 100
 
-python main.py --device $gpu --runs $runs --model evolve-h  --dataset as733 --patiance 20 --weight_decay 1e-5
+python main.py --device $gpu --runs $runs --model evolve-h  --dataset as733  --n_neg_train 10 --n_neg_test 100
+
+python main.py --device $gpu --runs $runs --model evolve-o --dataset sbm  --n_neg_train 10 --n_neg_test 100
+
+python main.py --device $gpu --runs $runs --model evolve-h  --dataset sbm  --n_neg_train 10 --n_neg_test 100
+
+python main.py --device $gpu --runs $runs --model evolve-o --dataset stackoverflow   --n_neg_train 10 --n_neg_test 100 --node_feat dummy
+
+python main.py --device $gpu --runs $runs --model evolve-h  --dataset stackoverflow   --n_neg_train 10 --n_neg_test 100 --node_feat dummy

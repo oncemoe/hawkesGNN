@@ -143,7 +143,7 @@ class LinearLayer(nn.Module):
         if dropout > 0:
             layer_wrapper.append(nn.Dropout(dropout))
         if has_act:
-            layer_wrapper.append(nn.PReLU())
+            layer_wrapper.append(nn.ReLU())
         self.layer = nn.Sequential(*layer_wrapper)
 
     def forward(self, x):
@@ -204,7 +204,7 @@ class RolandGNN(BaseLPModel):
                 ResidualEdgeConvLayer(n_hidden, n_hidden, n_hidden) for _ in range(n_mp_layer)
             ])
             self.bn = nn.ModuleList([ nn.BatchNorm1d(n_hidden) for _ in range(n_mp_layer) ])
-            self.act = nn.ModuleList([ nn.PReLU() for _ in range(n_mp_layer) ])
+            self.act = nn.ModuleList([ nn.ReLU() for _ in range(n_mp_layer) ])
         else:
             self.register_parameter('mp', None)
     
@@ -229,8 +229,9 @@ class RolandGNN(BaseLPModel):
         h_stack = []
         for i, conv in enumerate(self.mp):
             h = conv(h, data.edge_index, edge_feature=e)
-            h = self.bn[i](h)
             h = self.act[i](h)
+            h = self.bn[i](h)
+
             if H_prev is not None:
                 h = self.updater(h, H_prev[i], data.keep_ratio)
             h_stack.append(h.detach())
@@ -286,7 +287,7 @@ class MLPUpdater(nn.Module):
         super(MLPUpdater, self).__init__()
         self.mlp = nn.Sequential(
             nn.Linear(dim_in + dim_out, dim_in),
-            nn.PReLU(),
+            nn.ReLU(),
             nn.Linear(dim_in, dim_out)
         )
 

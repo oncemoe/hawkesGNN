@@ -59,15 +59,16 @@ class LinkPrediction:
                 edges = target.raw_edge_index
             else:
                 edges = target.edge_index    
-            neg_edges = self.fast_negative_sampling(edges, target.num_nodes, num_neg_samples=self.n_neg_train)
-            if device is not None:
-                return edges.to(device), neg_edges.to(device)
-            return edges, neg_edges
-            # return negative_sampling(
+            # neg_edges = negative_sampling(
             #     edges, 
             #     num_nodes=target.num_nodes,
             #     num_neg_samples=edges.size(1) * self.n_neg_train, 
             #     method=self.neg_method)
+            neg_edges = self.fast_negative_sampling(edges, target.num_nodes, num_neg_samples=self.n_neg_train)
+            if device is not None:
+                return edges.to(device), neg_edges.to(device)
+            return edges, neg_edges
+            
 
     def prepare_test_edges(self, target, device):
         if 'raw_edge_index' in target: 
@@ -81,7 +82,8 @@ class LinkPrediction:
         
         #TODO: its better to call unique in preprocess, but, i dont have much time...
         if target.num_nodes **2 * 10 < target.neg_edge_index.shape[1]:
-            neg_edges, idx = neg_edges.unique(dim=1, return_inverse=True)
+            # neg_edges, idx = neg_edges.unique(dim=1, return_inverse=True)  # not good, no use
+            idx = None
         else:
             idx = None
         return pos_edges, neg_edges, idx
@@ -220,4 +222,9 @@ class LinkPrediction:
             gpu_usage_list.append(gpu_mem_alloc)
 
         m = args.model
-        save_result(f"Exp_{m}_{args.dataset}{'_minibatch' if args.minibatch else ''}.log", args, mrr_lists, gpu_usage_list, time_usage_list, not args.no_log)
+        bn = '-bn' if args.bn else ''
+        oh = '-onehot' if args.node_feat == 'onehot-id' else ''
+        no = '-' + args.norm_type if args.model in ['hgcn', 'hgat'] else ''
+        mini = '.minibatch' if args.minibatch else ''
+        exp = '.' + args.exp_name if args.exp_name != '' else ''
+        save_result(f"Exp_{m}{bn}{oh}{no}_{args.dataset}{mini}{exp}.log", args, mrr_lists, gpu_usage_list, time_usage_list, not args.no_log)

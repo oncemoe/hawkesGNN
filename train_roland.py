@@ -75,6 +75,8 @@ class RolandLinkPrediction(LinkPrediction):
         time_usage_list = []
         H_prev = None
         meta_model = None
+        lr_scheduler = None
+        optimizer = None
         for t in range(task_range):
             if args.roland_is_meta and meta_model is not None:
                 model.load_state_dict(copy.deepcopy(meta_model))
@@ -85,6 +87,9 @@ class RolandLinkPrediction(LinkPrediction):
             count_list.append(_cnt)
 
             # https://github.com/pytorch/pytorch/issues/113758
+            if lr_scheduler is not None:
+                del lr_scheduler
+                del optimizer
             optimizer = torch.optim.Adam(params=model.parameters(),weight_decay=args.weight_decay,lr=args.lr, foreach=False)
             lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0, last_epoch=-1)
 
@@ -120,7 +125,6 @@ class RolandLinkPrediction(LinkPrediction):
                 time_usage_list.append(t3-t0)
             pbar.close()
 
-            model.eval()
             with torch.no_grad():
                 data = dataset[t].to(args.device)
                 _, H_prev = model(data, H_prev)

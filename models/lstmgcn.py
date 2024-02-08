@@ -10,21 +10,23 @@ from models.base import BaseLPModel
 # from Dyted
 # https://github.com/Kaike-Zhang/DyTed/blob/main/model/LSTMGCN/LSTM_GCN.py
 class LSTMGCN(BaseLPModel):
-    def __init__(self, n_node, n_feat, n_hidden, n_layers=2, dropout=0.1, bias=False):
+    def __init__(self, n_node, n_feat, n_hidden, n_layers=2, dropout=0.1, bias=False, name='gru'):  # lstm cell has bad performance
         super().__init__()
         self.input_fc = torch.nn.Linear(n_feat, n_hidden)
 
         self.dropout = nn.Dropout(dropout)
         self.gcn_layers = nn.ModuleList([GCNConv(n_hidden, n_hidden, bias=bias) for i in range(n_layers)])
-        self.rnn = nn.GRU(input_size=n_hidden, hidden_size=n_hidden)
-        self.rnn2 = nn.GRU(input_size=n_hidden, hidden_size=n_hidden)
+        
+        rnn = nn.GRU if name!='lstm' else nn.LSTM
+        self.rnn = rnn(input_size=n_hidden, hidden_size=n_hidden)
+        self.rnn2 = rnn(input_size=n_hidden, hidden_size=n_hidden)
 
         self.predictor = LinkPredictor(n_hidden, n_hidden, 1, 2, dropout)
 
     def forward(self, batch_list):
         struct_out = []
         for snap in batch_list:
-            x =self.input_fc( snap.x.to_dense())
+            x =self.input_fc( snap.x)
             for gcn in self.gcn_layers:
                 x = gcn.forward(x, snap.edge_index)
             struct_out.append(x[None, :, :])  # N x dim - len(T)
