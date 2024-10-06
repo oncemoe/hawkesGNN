@@ -33,8 +33,9 @@ class ScalableLinkPrediction(LinkPrediction):
             count = pos_edges.size(1)+neg_edges.size(1)
             loader = NeighborLoader(
                 data,
-                num_neighbors=[20, 10, 5, 1],#[-1] * self.n_layers,
-                batch_size=self.batch_size
+                num_neighbors=[-1] * (self.n_layers+2) if self.strategy=='all' else [20, 10, 5, 1], #[20, 10, 5, 1],#
+                batch_size=self.batch_size,
+                subgraph_type='induced',
             )
             
             H = torch.zeros((model.n_node, self.n_hidden), device='cpu')
@@ -47,7 +48,9 @@ class ScalableLinkPrediction(LinkPrediction):
             seed_everything(seed)
             with torch.no_grad():
                 for minibatch in loader:
-                    bs = minibatch.batch_size
+                    # bs = minibatch.batch_size
+                    bs = minibatch.input_id.size(0) # wired bug of pyg NeighborLoader, (bs=1)
+                    # print(minibatch, bs)
                     h = model(minibatch.to(device))
                     H[minibatch.n_id[:bs]] = h[:bs].cpu()
 
@@ -61,7 +64,7 @@ class ScalableLinkPrediction(LinkPrediction):
             # Step 2
             optimizer.zero_grad()
             for i, edges in enumerate([pos_edges, neg_edges]):
-                for edge in torch.split(edges, self.batch_size*8, dim=1):
+                for edge in torch.split(edges, self.batch_size*64, dim=1):
                     h1 = Variable(H[edge[0]], requires_grad=True).to(device)
                     h2 = Variable(H[edge[1]], requires_grad=True).to(device)
                     z, y_hat = model.predictor(h1, h2, raw=True)
@@ -73,13 +76,14 @@ class ScalableLinkPrediction(LinkPrediction):
                         loss = -torch.log(1 - y_hat + 1e-15)
                     h1.retain_grad()
                     h2.retain_grad()
-                    (loss.sum()/count).backward()
+                    (loss.sum()).backward()
                     #z.backward(gradient=dLdz/count)
                     H_grad.index_add_(0, edge[0], h1.grad.cpu())
                     H_grad.index_add_(0, edge[1], h2.grad.cpu())
                     # H_grad[edge[0]] += h1.grad.cpu()
                     # H_grad[edge[1]] += h2.grad.cpu()
                     losses.append(loss.sum().item()/count)  # for visualize
+            H_grad /= count
             torch.nn.utils.clip_grad_norm_(model.parameters(), self.clip_grad_norm)
             optimizer.step()
             loss_list.append(np.sum(losses))
@@ -93,6 +97,7 @@ class ScalableLinkPrediction(LinkPrediction):
             optimizer.zero_grad()
             for minibatch in loader:
                 bs = minibatch.batch_size
+                bs = minibatch.input_id.size(0) # wired bug of pyg NeighborLoader, (bs==1)
                 h:torch.Tensor = model(minibatch.to(device))[:bs]
                 h.backward(gradient=H_grad[minibatch.n_id[:bs].cpu()].to(device))
             torch.nn.utils.clip_grad_norm_(model.parameters(), self.clip_grad_norm)

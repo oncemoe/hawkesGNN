@@ -7,6 +7,7 @@ from  torch_geometric.typing import torch_sparse
 from torch_geometric.nn import GATConv
 import numpy as np
 import math
+from ogb.nodeproppred import PygNodePropPredDataset
 import random
 from sklearn.metrics import roc_auc_score
 from evaluator import Evaluator
@@ -99,7 +100,10 @@ def calculate_sample_mrr(pos_pred, neg_pred, num_neg_samples):
             'y_pred_pos': pos_pred.view(-1), 'y_pred_neg': neg_pred.view(-1)
         })
     else:
-        a = {'rocauc':torch.zeros(1).sum(), 'ap': torch.zeros(1).sum()}
+        #a = {'rocauc':torch.zeros(1).sum(), 'ap': torch.zeros(1).sum()}
+        a = e.eval({
+            'y_pred_pos': pos_pred.view(-1), 'y_pred_neg': neg_pred.view(-1, num_neg_samples)[:, 0]
+        })
     return r['mrr_list'].mean(), r['hits@1_list'].mean(), r['hits@3_list'].mean(), r['hits@10_list'].mean(), a['rocauc'], a['ap']
 
 

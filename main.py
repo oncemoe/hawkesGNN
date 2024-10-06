@@ -42,6 +42,18 @@ def build_model(args, factory):
         from models.htgn.HTGN import HTGN
         model = HTGN(factory.num_nodes, factory.node_feats_dim, factory.edge_feats_dim,
                             args.n_hidden, dropout=args.dropout, window=args.window-1).to(args.device)
+    elif args.model == 'graphmixer':
+        from models.graphmixer import GraphMixer
+        model = GraphMixer(factory.num_nodes, factory.node_feats_dim, factory.edge_feats_dim,
+                            args.n_hidden, dropout=args.dropout).to(args.device)
+    elif args.model == 'm2dne':
+        from models.m2dne import M2DNE
+        model = M2DNE(factory.num_nodes, factory.node_feats_dim, factory.edge_feats_dim,
+                            args.n_hidden, dropout=args.dropout).to(args.device)
+    elif args.model == 'ghp':
+        from models.ghp import GHP
+        model = GHP(factory.num_nodes, factory.node_feats_dim, factory.edge_feats_dim,
+                            args.n_hidden, dropout=args.dropout).to(args.device)
     return model
 
 
@@ -55,11 +67,11 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='bitcoinotc')
     parser.add_argument('--model', type=str, default='hgat', choices=['gcn', 'gat', 
                         'hgcn', 'hgat', 'dysat', 'evolve-o', 'evolve-h', 'lstmgcn', 'wdgcn',
-                        'vgrnn', 'roland', 'wingnn', 'htgn']) # 
+                        'vgrnn', 'roland', 'wingnn', 'htgn', 'graphmixer', 'm2dne', 'ghp']) # 
     parser.add_argument('--node_feat', type=str, default='dummy', choices=['onehot-id', 'dummy'])
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--log_steps', type=int, default=1)
-    parser.add_argument('--patiance', type=int, default=10)
+    parser.add_argument('--patiance', type=int, default=20)
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--eval_steps', type=int, default=1)
     parser.add_argument('--seed', type=int, default=42)
@@ -68,7 +80,7 @@ if __name__ == "__main__":
     parser.add_argument('--row_mrr', action="store_true")
     
     # general model configuration
-    parser.add_argument('--n_neg_train', type=int, default=10)
+    parser.add_argument('--n_neg_train', type=int, default=1)
     parser.add_argument('--n_neg_test', type=int, default=100)
     parser.add_argument('--window', type=int, default=10)
     parser.add_argument('--n_layers', type=int, default=2)
@@ -152,11 +164,14 @@ if __name__ == "__main__":
         factory = JodieLoaderFactory(root, args.dataset, negative_sampling=args.n_neg_test) 
     
     if args.model in ['gcn', 'gat', 'hgcn', 'hgat']:
-        loaders = factory.get_pair_dataloader(split=split[args.dataset], device=device, window=args.window)
-    elif args.model in ['dysat', 'evolve-o', 'evolve-h', 'lstmgcn', 'wdgcn']:
+        do_coalesce = True if args.model in ['gcn', 'gat'] else False
+        loaders = factory.get_pair_dataloader(split=split[args.dataset], device=device, window=args.window, coalesce=do_coalesce)
+    elif args.model in ['dysat', 'evolve-o', 'evolve-h', 'lstmgcn', 'wdgcn', 'ghp']:
         loaders = factory.get_list_dataloader(split=split[args.dataset], device=device, window=args.window)
     elif args.model in ['roland', 'vgrnn', 'wingnn', 'htgn']:
         loaders = factory.get_roland_snaps(split=split[args.dataset], device=device)
+    elif args.model in ['graphmixer', 'm2dne']:
+        loaders = factory.get_lru_dataloader(split=split[args.dataset], device=device)
 
     # sorry for sooo many train logic
     # it tooo hard to merge them into one
@@ -172,10 +187,22 @@ if __name__ == "__main__":
     elif args.model == 'htgn':
         from train_htgn import HTGNLinkPrediction
         lp = HTGNLinkPrediction(args, build_model)
+    elif args.model == 'm2dne':
+        from train_m2dne import M2DNELinkPrediction
+        lp = M2DNELinkPrediction(args, build_model)
     else:
         if args.minibatch:
-            from train_scalable import ScalableLinkPrediction
-            lp = ScalableLinkPrediction(args, build_model)
+            #from train_scalable import ScalableLinkPrediction
+            from train_minibatch import MiniBatchLinkPrediction
+            lp = MiniBatchLinkPrediction(args, build_model)
+            if args.dataset in ['as733', 'sbm']:
+                lp.strategy = 'all'
+                lp.strategy = 'random'
+            else:
+                lp.strategy = 'random'
+        # elif args.live_update:
+        #     from train_live import LiveLinkPrediction
+        #     lp = LiveLinkPrediction(args, build_model)
         else:
             lp = LinkPrediction(args, build_model)
     

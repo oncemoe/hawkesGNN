@@ -29,19 +29,19 @@ class graph_gru_gcn(nn.Module):
         
         for i in range(self.n_layer):
             if i==0:
-                self.weight_xz.append(conv(input_size, hidden_size, act=lambda x:x, bias=bias))
-                self.weight_hz.append(conv(hidden_size, hidden_size, act=lambda x:x, bias=bias))
-                self.weight_xr.append(conv(input_size, hidden_size, act=lambda x:x, bias=bias))
-                self.weight_hr.append(conv(hidden_size, hidden_size, act=lambda x:x, bias=bias))
-                self.weight_xh.append(conv(input_size, hidden_size, act=lambda x:x, bias=bias))
-                self.weight_hh.append(conv(hidden_size, hidden_size, act=lambda x:x, bias=bias))
+                self.weight_xz.append(conv(input_size, hidden_size, bias=bias))
+                self.weight_hz.append(conv(hidden_size, hidden_size, bias=bias))
+                self.weight_xr.append(conv(input_size, hidden_size, bias=bias))
+                self.weight_hr.append(conv(hidden_size, hidden_size, bias=bias))
+                self.weight_xh.append(conv(input_size, hidden_size, bias=bias))
+                self.weight_hh.append(conv(hidden_size, hidden_size, bias=bias))
             else:
-                self.weight_xz.append(conv(hidden_size, hidden_size, act=lambda x:x, bias=bias))
-                self.weight_hz.append(conv(hidden_size, hidden_size, act=lambda x:x, bias=bias))
-                self.weight_xr.append(conv(hidden_size, hidden_size, act=lambda x:x, bias=bias))
-                self.weight_hr.append(conv(hidden_size, hidden_size, act=lambda x:x, bias=bias))
-                self.weight_xh.append(conv(hidden_size, hidden_size, act=lambda x:x, bias=bias))
-                self.weight_hh.append(conv(hidden_size, hidden_size, act=lambda x:x, bias=bias))
+                self.weight_xz.append(conv(hidden_size, hidden_size, bias=bias))
+                self.weight_hz.append(conv(hidden_size, hidden_size, bias=bias))
+                self.weight_xr.append(conv(hidden_size, hidden_size, bias=bias))
+                self.weight_hr.append(conv(hidden_size, hidden_size, bias=bias))
+                self.weight_xh.append(conv(hidden_size, hidden_size, bias=bias))
+                self.weight_hh.append(conv(hidden_size, hidden_size, bias=bias))
     
     def forward(self, inp, edgidx, h):
         h_out = torch.zeros(h.size())

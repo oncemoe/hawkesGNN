@@ -121,7 +121,7 @@ class GraphPairDS(td.Dataset):
 class LRUUpdater:
     def __init__(self, dataset, k):
         num_nodes = dataset[0].num_nodes
-        self.x = dataset[0].x
+        self.k = k
         self.buf = [Queue(maxsize=k) for _ in range(num_nodes)]
         self.edge = torch.cat([d.edge_index for d in dataset], dim=1)
         self.attr = torch.cat([d.edge_attr for d in dataset])
@@ -140,20 +140,21 @@ class LRUUpdater:
             u,v,i = edge[idx]
             q = self.buf[u]
             if q.full():
-                    q.get()
+                q.get()
             q.put(i)
         self.offset += len(edge)
     
     def get(self):
         d = Data()
-        d.x = self.x
         d.num_nodes = len(self.buf)
         indices = np.hstack([np.array(q.queue) for q in self.buf])
         indices = torch.from_numpy(indices).long()
         #indices = np.hstack([np.stack([np.ones(q.qsize()) * i, np.array(q.queue)]) for i, q in enumerate(self.buf)])
         d.edge_index = self.edge[:, indices]
-        d.adj = torch.sparse_coo_tensor(d.edge_index, torch.ones(len(indices)), d.size()).coalesce()
+        #d.adj = torch.sparse_coo_tensor(d.edge_index, torch.ones(len(indices)), d.size()).coalesce()
         d.edge_attr = self.attr[indices]
         #attr = torch.cat([dataset[t-j].edge_attr.cpu() for j in range(0, window)], dim=0).double()
         #data.edge_attr = attr
+        mapping = np.hstack([np.arange(len(q.queue)) + self.k * i for i,q in enumerate(self.buf)])
+        d.mapping = torch.from_numpy(mapping)
         return d

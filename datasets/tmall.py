@@ -14,9 +14,9 @@ from torch_geometric.data import (
     extract_tar
 )
 from datasets.utils import shrink_edge_index
+from sklearn.preprocessing import LabelEncoder
 
-
-class SBM(InMemoryDataset):
+class TMALL(InMemoryDataset):
     r"""The Bitcoin-OTC dataset from the `"EvolveGCN: Evolving Graph
     Convolutional Networks for Dynamic Graphs"
     <https://arxiv.org/abs/1902.10191>`_ paper, consisting of 138
@@ -54,27 +54,23 @@ class SBM(InMemoryDataset):
           - 0
     """
 
-    url = 'https://github.com/IBM/EvolveGCN/blob/master/data/sbm_50t_1000n_adj.csv.tar.gz'
+    url1 = 'https://raw.githubusercontent.com/rootlu/MMDNE/master/data/tmall/tmall.txt'
+    url2 = 'https://raw.githubusercontent.com/rootlu/MMDNE/master/data/tmall/node2label.txt'
 
-    def __init__(self, root: str, edge_window_size: int = 10,
+    def __init__(self, root: str, 
                  transform: Optional[Callable] = None,
                  pre_transform: Optional[Callable] = None):
-        self._freq = 1
-        self.edge_window_size = edge_window_size
         super().__init__(root, transform, pre_transform)
-        self.data, self.slices = torch.load(self.processed_paths[0])
-
-    @property
-    def frequency(self):
-        return self._freq
+        self.data = torch.load(self.processed_paths[0])
+        #self.load(self.processed_paths[0], data_cls=Data)
 
     @property
     def raw_file_names(self) -> str:
-        return 'sbm_50t_1000n_adj.csv'
+        return 'tmall.txt', 'node2label.txt'
 
     @property
     def processed_file_names(self) -> str:
-        return 'sbm.pt'
+        return 'tmall.pt'
 
     @property
     def raw_dir(self) -> str:
@@ -82,45 +78,40 @@ class SBM(InMemoryDataset):
 
     @property
     def processed_dir(self) -> str:
-        return osp.join(self.root, 'sbm_processed')
+        return osp.join(self.root, 'tmall_processed')
     
     @property
     def num_nodes(self) -> int:
         return self._data.edge_index.max().item() + 1
 
     def download(self):
-        path = download_url(self.url, self.raw_dir)
-        extract_tar(path, self.raw_dir, mode="r:gz")
-        os.unlink(path)
+        path = download_url(self.url1, self.raw_dir)
+        path = download_url(self.url2, self.raw_dir)
 
-    def shrink_edge_index(self, df):
-        _, new_edge_index = np.unique(df[['x', 'y']].values, return_inverse=True)
-        new_edge_index = new_edge_index.reshape(len(df), 2)
-        df['x'] = new_edge_index[:, 0]
-        df['y'] = new_edge_index[:, 1]
 
     def process(self):
-        df = pd.read_csv(self.raw_paths[0], header=0)
-        df.columns = ['x', 'y', 'w', 't']
-        shrink_edge_index(df)
+        df = pd.read_csv(self.raw_paths[0], header=None, sep=' ')
+        df.columns = ['x', 'y', 't']
         num_nodes = max(df.x.max(), df.y.max())+1
-        stamps = df.t.unique()
-        stamps.sort()
         
-        data_list = []
-        for t in stamps:
-            sf = df[df['t'] == t]
-            data = Data()
-            data.num_nodes = int(num_nodes)
-            data.edge_index = torch.tensor(sf[['x', 'y']].values.T, dtype=torch.long)
-            data.edge_attr = torch.tensor(sf[['w', 't']].values, dtype=torch.long)
-            data_list.append(data)
-            
-        if self.pre_filter is not None:
-            data_list = [d for d in data_list if self.pre_filter(d)]
+        data = Data()
+        data.num_nodes = int(num_nodes)
+        data.edge_index = torch.tensor(df[['x', 'y']].values.T, dtype=torch.long)
+        data.edge_attr = torch.tensor(df[[ 't']].values, dtype=torch.float)
+        
+        yf = pd.read_csv(self.raw_paths[1], header=None, sep=' ')
+        yf.columns = ['id', 'y']
+        yf['y_'] = LabelEncoder().fit_transform(yf.y)
+        y = np.zeros(num_nodes)
+        y[yf.id] = yf['y_']
+        data.y = torch.tensor(y, dtype=torch.long).view(-1, 1).long()
+        data.mask = torch.tensor(yf['id'].values, dtype=torch.long)
 
         if self.pre_transform is not None:
-            data_list = [self.pre_transform(d) for d in data_list]
+            data = self.pre_transform(data)
 
-        data, slices = self.collate(data_list)
-        torch.save((data, slices), self.processed_paths[0])
+        torch.save((data), self.processed_paths[0])
+
+
+        # data, slices = self.collate(data)
+        # torch.save((data, slices), self.processed_paths[0])
