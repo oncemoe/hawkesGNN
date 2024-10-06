@@ -101,6 +101,8 @@ class LinkPrediction:
 
             pos_edges, neg_edges = self.negative_sampling(target, device)
             loss = model.train_step(data, pos_edges, neg_edges)
+            if hasattr(model, 'loss'):
+                loss += model.loss()
 
             loss_list.append(loss.item())
             count_list.append(pos_edges.size(1)+neg_edges.size(1))
@@ -170,7 +172,7 @@ class LinkPrediction:
         best_mrr = 0
         wandering = 0
         time_usage_list = []
-        pbar = tqdm(total=args.epochs)
+        pbar = tqdm(total=args.epochs, dynamic_ncols=True)
         for epoch in range(1, 1 + args.epochs):
             t0 = time.perf_counter()
             train_loss = self.train_epoch(model, loaders['train'], args.device, optimizer)
@@ -184,7 +186,8 @@ class LinkPrediction:
                 mrr = mets[1]
                 t3 = time.perf_counter()
 
-                if best_loss > val_loss:
+                #if best_loss > val_loss:
+                if mrr > best_mrr:
                     best_loss = val_loss
                     best_mrr = mrr
                     wandering = 0
@@ -212,6 +215,7 @@ class LinkPrediction:
                 print(b)
                 break
             seed_everything(random_seeds[run])
+            torch.cuda.reset_peak_memory_stats(device=args.device)
             model = self.build_model(args, factory)
             model, epoch_time = self.train(args, model, loaders)
             loss, mrr = self.test(model, loaders['test'], args.device, args.row_mrr)
@@ -219,6 +223,7 @@ class LinkPrediction:
             mrr_lists.append(mrr)
             time_usage_list.append(epoch_time)
             gpu_mem_alloc = torch.cuda.max_memory_allocated(args.device) / 1000000
+            print(gpu_mem_alloc)
             gpu_usage_list.append(gpu_mem_alloc)
 
         m = args.model

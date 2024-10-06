@@ -7,7 +7,7 @@ cd $BASE_DIR
 if [ -z "$gpu" ]; then
     gpu=0
 fi
-runs=1
+runs=3
 
 echo "run experiments on device $gpu, runs=$runs"
 
@@ -21,8 +21,8 @@ python main.py --device $gpu --runs $runs --model hgat --minibatch --bias  --dat
 
 python main.py --device $gpu --runs $runs --model hgat --minibatch --bias  --dataset redb
 
-python main.py --device $gpu --runs $runs --model hgat --minibatch --bias  --dataset as733
+# python main.py --device $gpu --runs $runs --model hgat --minibatch --bias  --dataset as733
 
-python main.py --device $gpu --runs $runs --model hgat --minibatch --bias  --dataset sbm
+# python main.py --device $gpu --runs $runs --model hgat --minibatch --bias  --dataset sbm
 
 python main.py --device $gpu --runs $runs --model hgat --minibatch --bias  --dataset stackoverflow --batch_size 8096

@@ -2,12 +2,12 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 from torch.nn import Parameter
-from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.nn.conv import MessagePassing, GATConv
 from torch_geometric.nn.inits import zeros, glorot
 from torch_geometric.nn.conv.gcn_conv import gcn_norm, Linear
 
 from torch_geometric.utils import add_remaining_self_loops,  softmax, coalesce
-from torch_geometric.utils.coalesce import maybe_num_nodes
+from torch_geometric.utils.num_nodes import maybe_num_nodes
 from torch_scatter import scatter_add
 import torch.nn.functional as F
 from typing import Optional, Tuple, Union
@@ -352,9 +352,9 @@ class HGNNLP(BaseLPModel):
         self.input_fc = torch.nn.Linear(n_feat, n_hidden, bias=False)
 
         if name == 'gcn':
-            self.model = torch.nn.ModuleList([GCNConv(n_hidden, n_hidden, add_self_loops=False, bias=bias) for _ in range(layers)])
+            self.model = torch.nn.ModuleList([GCNConv(n_hidden, n_hidden, bias=bias) for _ in range(layers)])
         elif name == 'gat':
-            self.model = torch.nn.ModuleList([GATConv(n_hidden, n_hidden // heads, add_self_loops=False, bias=bias, heads=heads, edge_dim=n_edge) for _ in range(layers)])
+            self.model = torch.nn.ModuleList([GATConv(n_hidden, n_hidden // heads, bias=bias, heads=heads, edge_dim=n_edge) for _ in range(layers)])
         elif name == 'hgcn':
             self.model = torch.nn.ModuleList([HGCNConv(n_node, n_hidden, n_hidden, dropout, bias, layer_skip, norm=norm) for _ in range(layers)])
         elif name == 'hgat':
@@ -370,7 +370,7 @@ class HGNNLP(BaseLPModel):
 
 
     def forward(self, data):
-        h = self.input_fc(data.x.to_dense())
+        h = self.input_fc(data.x)
         h_stack = [h]
         
         edge_attr = data.edge_attr
@@ -386,7 +386,7 @@ class HGNNLP(BaseLPModel):
                 else:
                     h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:])
             elif self.name == 'hgat':
-                h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:], edge_attr)
+                h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:], None)
             
             if self.batch_norms:
                 h = self.batch_norms[layer](h)
@@ -400,3 +400,42 @@ class HGNNLP(BaseLPModel):
         if self.skip:
             h = torch.cat([h_stack[0], h], dim=1)
         return h
+    
+
+class HGNN(HGNNLP):
+    def __init__(self, n_node, n_feat, n_edge, n_hidden, dropout=0.1, bias = False, layer_skip=False, 
+                         name='gcn', layers=2, heads=1, time_encoder=False, jodie=False, batch_norm=False, norm='snorm', initial_skip=False, num_class=2):
+        super().__init__(n_node, n_feat, n_edge, n_hidden, dropout, bias, layer_skip, name, layers, heads, time_encoder, jodie, batch_norm, norm)
+        self.predictor = nn.Linear(n_hidden * 2 if initial_skip else n_hidden, num_class)
+
+    def forward(self, data):
+        h = self.input_fc(data.x)
+        h_stack = [h]
+        
+        edge_attr = data.edge_attr
+            
+        for layer, net in enumerate(self.model):    
+            if self.name == 'gcn':
+                h = net(h_stack[-1], data.edge_index)
+            elif self.name == 'gat':
+                h = net(h_stack[-1], data.edge_index, edge_attr)
+            elif self.name == 'hgcn':
+                if hasattr(data, 'n_id'):  # speical case for mini batch
+                    h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:], data.n_id)
+                else:
+                    h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:])
+            elif self.name == 'hgat':
+                h = net(h_stack[-1], data.edge_index, data.edge_attr[:, -1:], None)
+            
+            if self.batch_norms:
+                h = self.batch_norms[layer](h)
+    
+            if layer < len(self.model)-1:
+                h = self.act(h)
+                h = self.drop(h)
+            h_stack.append(h)
+
+        h = h_stack[-1]
+        if self.skip:
+            h = torch.cat([h_stack[0], h], dim=1)
+        return self.predictor(h).log_softmax(dim=-1)

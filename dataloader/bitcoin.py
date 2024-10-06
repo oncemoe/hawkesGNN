@@ -88,7 +88,7 @@ class BitcoinLoaderFactory:
         }
     
     #
-    def get_pair_dataloader(self, window=10, split=[95, 95+14, 95+14+28], device='cpu', **kwargs):
+    def get_pair_dataloader(self, window=10, split=[95, 95+14, 95+14+28], device='cpu', coalesce=False, live_update=False, **kwargs):
         split = np.array(split)
         assert window < split[0] and len(self.ds) >= split[-1]
         ds = []
@@ -103,8 +103,9 @@ class BitcoinLoaderFactory:
                 indices = self.ds[i-1].edge_index
                 attr = self.ds[i-1].edge_attr
             #attr = torch.cat([torch.ones_like(self.ds[i-j].edge_attr) * j for j in range(1, window)], dim=0).double()
-            #indices, attr = tgu.coalesce(indices, attr, self.num_nodes, reduce='max')
             indices, attr = simple_to_undirected(indices, attr)  # avoid coalesce, retain duplicate edges
+            if coalesce:
+                indices, attr = tgu.coalesce(indices, attr, self.num_nodes)
             # data.adj = torch.sparse_coo_tensor(indices, torch.ones(len(indices[0])), delta.size()).coalesce()
             data.edge_index = indices
             #attr[:, -1] = (attr[:, -1].max() - attr[:, -1]) / self.ds.frequency
@@ -121,19 +122,22 @@ class BitcoinLoaderFactory:
             target.edge_index = indices
             target.neg_edge_index = safe_negative_sampling(target, self._num_neg, device=device)
             ds.append((data, target))
-            
-        train_ds = GraphPairDS(ds[:split[0]-window])
-        val_ds = GraphPairDS(ds[split[0]-window: split[1]-window])
-        test_ds = GraphPairDS(ds[split[1]-window: split[2]-window])
-        print(f"train/ val/ test = {len(train_ds)}/ {len(val_ds)}/ {len(test_ds)}")
         
-        # https://github.com/pytorch/pytorch/issues/20248
-        # sparse tensor in DataSet reqiure num_workers=0
-        return {
-            'train': DataLoader(train_ds, batch_size=1, num_workers=0, shuffle=True, **kwargs),
-            'val': DataLoader(val_ds, batch_size=1, num_workers=0, **kwargs),
-            'test': DataLoader(test_ds, batch_size=1, num_workers=0, **kwargs),
-        }
+        if live_update:
+            return RolandDSWrapper(ds), split
+        else:
+            train_ds = GraphPairDS(ds[:split[0]-window])
+            val_ds = GraphPairDS(ds[split[0]-window: split[1]-window])
+            test_ds = GraphPairDS(ds[split[1]-window: split[2]-window])
+            print(f"train/ val/ test = {len(train_ds)}/ {len(val_ds)}/ {len(test_ds)}")
+            
+            # https://github.com/pytorch/pytorch/issues/20248
+            # sparse tensor in DataSet reqiure num_workers=0
+            return {
+                'train': DataLoader(train_ds, batch_size=1, num_workers=0, shuffle=True, **kwargs),
+                'val': DataLoader(val_ds, batch_size=1, num_workers=0, **kwargs),
+                'test': DataLoader(test_ds, batch_size=1, num_workers=0, **kwargs),
+            }
 
 
     def get_roland_snaps(self, split, device='cpu'):
@@ -166,6 +170,41 @@ class BitcoinLoaderFactory:
             dp = data
         return RolandDSWrapper(ds), split
 
+
+    #
+    def get_lru_dataloader(self, window=10, split=[95, 95+14, 95+14+28], device='cpu', **kwargs):
+        from dataloader.utils import LRUUpdater
+        lru = LRUUpdater(self.ds, window)
+        split = np.array(split)
+        assert len(self.ds) >= split[-1]
+        ds = []
+        for i in tqdm(range(1, split[-1]), desc='Generating'):
+            lru.update(self.ds[i-1])
+            hist = lru.get()
+            data = Data()
+            data.x = self.x
+            data.edge_index = hist.edge_index
+            attr = hist.edge_attr.double()
+            attr[:, -1] = (self.ds.frequency*(i+1) - attr[:, -1]) / self.ds.frequency
+            data.edge_attr = attr # torch.ones_like(attr)
+            data.mapping = hist.mapping  # for graph_mixer
+
+            target = Data()
+            target.x = self.x
+            target.edge_index = self.ds[i].edge_index
+            target.neg_edge_index = safe_negative_sampling(target, self._num_neg, device=device)
+            ds.append((data, target))
+            
+        train_ds = GraphPairDS(ds[:split[0]-1])
+        val_ds = GraphPairDS(ds[split[0]-1: split[1]-1])
+        test_ds = GraphPairDS(ds[split[1]-1: split[2]-1])
+        print(f"train/ val/ test = {len(train_ds)}/ {len(val_ds)}/ {len(test_ds)}")
+        
+        return {
+            'train': DataLoader(train_ds, batch_size=1, num_workers=0, shuffle=True, **kwargs),
+            'val': DataLoader(val_ds, batch_size=1, num_workers=0, **kwargs),
+            'test': DataLoader(test_ds, batch_size=1, num_workers=0, **kwargs),
+        }
 
     @property
     def num_nodes(self) -> int:
