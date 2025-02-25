@@ -138,7 +138,7 @@ if __name__ == "__main__":
         'reddit': [0.7, 0.85, 1]
     }
     if args.test:
-        args.window=3
+        #args.window=3
         for k in split.keys():
             split[k] = [10, 12, 14]
         split['uci'] = [21, 21 + 3, 21 + 3 + 6]
@@ -193,8 +193,12 @@ if __name__ == "__main__":
     else:
         if args.minibatch:
             #from train_scalable import ScalableLinkPrediction
-            from train_minibatch import MiniBatchLinkPrediction
-            lp = MiniBatchLinkPrediction(args, build_model)
+            if args.model in ['gcn', 'gat', 'hgcn', 'hgat']:
+                from train_minibatch import MiniBatchLinkPrediction
+                lp = MiniBatchLinkPrediction(args, build_model)
+            else:
+                from train_minibatch import SequenceMiniBatchLinkPrediction
+                lp = SequenceMiniBatchLinkPrediction(args, build_model)
             if args.dataset in ['as733', 'sbm']:
                 lp.strategy = 'all'
                 lp.strategy = 'random'

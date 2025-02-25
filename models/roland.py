@@ -182,7 +182,6 @@ class RolandLinkPredictor(torch.nn.Module):
 
 
 # ~~from https://github.com/snap-stanford/roland/blob/master/graphgym/models/gnn.py~~
-#  oh shit! it should from:
 # https://github.com/snap-stanford/roland/blob/master/graphgym/contrib/network/gnn_recurrent.py
 # refactoring this project frustrates me  :<
 class RolandGNN(BaseLPModel):
