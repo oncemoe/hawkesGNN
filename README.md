@@ -9,7 +9,9 @@
 ## 📖 Overview
 Snapshots serve as the foundation of discrete dynamic graphs. The conventional approach involves processing individual snapshots separately before attempting to merge them. This repository proposes an alternative methodology by initially merging multiple snapshots and subsequently modeling directly on the generated temporal graph.
 
-<img src="assets/overview.png" />
+<div align=center>
+    <img src="assets/overview.png" width="60%"/>
+</div>
 
 ## ⚡️ Quickstart
 
